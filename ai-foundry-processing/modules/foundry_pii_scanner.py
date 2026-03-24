@@ -39,7 +39,9 @@ def _get_text_client():
     return _text_client
 
 
-# Map Azure PII categories to our redaction labels (matching Presidio output format)
+# Only redact truly sensitive PII categories.
+# Broad categories like Person, Organization, DateTime are excluded because they
+# cause false positives on business terms (e.g., "merchant", "customer", "Visa").
 _CATEGORY_LABELS = {
     "USSocialSecurityNumber": "[SSN REDACTED]",
     "CreditCardNumber": "[CARD REDACTED]",
@@ -51,11 +53,16 @@ _CATEGORY_LABELS = {
     "USUKPassportNumber": "[PASSPORT REDACTED]",
     "InternationalBankingAccountNumber": "[BANK ACCT REDACTED]",
     "SWIFTCode": "[BANK ACCT REDACTED]",
-    "Person": "[NAME REDACTED]",
-    "Address": "[LOCATION REDACTED]",
     "IPAddress": "[IP REDACTED]",
-    "Organization": "[ORG REDACTED]",
-    "DateTime": "[DATE REDACTED]",
+    "Address": "[LOCATION REDACTED]",
+}
+
+# Domain-specific terms that should never be redacted even if flagged by the model.
+# Case-insensitive matching.
+_DOMAIN_ALLOWLIST = {
+    "merchant", "customer", "member", "borrower", "vendor", "applicant",
+    "cardholder", "accountholder", "beneficiary", "guarantor", "co-signer",
+    "navy federal", "nfcu", "visa", "mastercard", "american express",
 }
 
 
@@ -65,7 +72,7 @@ class FoundryPiiScanner:
     Same interface as PiiScanner (Presidio) for drop-in replacement.
     """
 
-    def __init__(self, confidence_threshold: float = 0.5, enabled: bool = True):
+    def __init__(self, confidence_threshold: float = 0.8, enabled: bool = True):
         self.confidence_threshold = confidence_threshold
         self.enabled = enabled
 
@@ -102,10 +109,12 @@ class FoundryPiiScanner:
             if not doc_result.entities:
                 return text, False, []
 
-            # Filter by confidence threshold
+            # Filter by: supported category, confidence threshold, and domain allowlist
             entities = [
                 e for e in doc_result.entities
-                if e.confidence_score >= self.confidence_threshold
+                if e.category in _CATEGORY_LABELS
+                and e.confidence_score >= self.confidence_threshold
+                and e.text.lower() not in _DOMAIN_ALLOWLIST
             ]
 
             if not entities:
@@ -177,7 +186,9 @@ class FoundryPiiScanner:
 
             offset_base = chunk_idx * chunk_size
             for entity in doc_result.entities:
-                if entity.confidence_score >= self.confidence_threshold:
+                if (entity.category in _CATEGORY_LABELS
+                        and entity.confidence_score >= self.confidence_threshold
+                        and entity.text.lower() not in _DOMAIN_ALLOWLIST):
                     has_pii = True
                     all_entities.append({
                         "entity": entity,

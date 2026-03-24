@@ -37,7 +37,9 @@ def _get_anonymizer():
     return _anonymizer
 
 
-# PII entity types to detect
+# Only detect truly sensitive PII entity types.
+# PERSON and LOCATION are excluded — they cause false positives on business terms
+# like "merchant", "customer", company names, and city references in documents.
 PII_ENTITIES = [
     "US_SSN",
     "CREDIT_CARD",
@@ -46,8 +48,6 @@ PII_ENTITIES = [
     "US_BANK_NUMBER",
     "US_DRIVER_LICENSE",
     "US_PASSPORT",
-    "PERSON",
-    "LOCATION",
     "IP_ADDRESS",
 ]
 
@@ -60,17 +60,22 @@ REDACTION_OPERATORS = {
     "US_BANK_NUMBER": "[BANK ACCT REDACTED]",
     "US_DRIVER_LICENSE": "[DL REDACTED]",
     "US_PASSPORT": "[PASSPORT REDACTED]",
-    "PERSON": "[NAME REDACTED]",
-    "LOCATION": "[LOCATION REDACTED]",
     "IP_ADDRESS": "[IP REDACTED]",
     "DEFAULT": "[PII REDACTED]",
+}
+
+# Domain-specific terms that should never be redacted even if flagged by the model.
+_DOMAIN_ALLOWLIST = {
+    "merchant", "customer", "member", "borrower", "vendor", "applicant",
+    "cardholder", "accountholder", "beneficiary", "guarantor", "co-signer",
+    "navy federal", "nfcu", "visa", "mastercard", "american express",
 }
 
 
 class PiiScanner:
     """Scan text for PII and redact using Presidio (local, no Azure calls)."""
 
-    def __init__(self, confidence_threshold: float = 0.5, enabled: bool = True):
+    def __init__(self, confidence_threshold: float = 0.8, enabled: bool = True):
         self.confidence_threshold = confidence_threshold
         self.enabled = enabled
 
@@ -99,6 +104,15 @@ class PiiScanner:
                 language="en",
                 score_threshold=self.confidence_threshold,
             )
+
+            if not results:
+                return text, False, []
+
+            # Filter out domain allowlisted terms
+            results = [
+                r for r in results
+                if text[r.start:r.end].lower() not in _DOMAIN_ALLOWLIST
+            ]
 
             if not results:
                 return text, False, []

@@ -26,10 +26,10 @@ A production-grade, push-based document ingestion pipeline that processes docume
 ### Configure Environment Variables
 
 ```bash
-# Copy the template and fill in SEARCH_ADMIN_KEY (the only secret)
+# Copy the template and fill in your Azure resource endpoints
 cd ai-foundry-processing
 cp .env.example .env
-vi .env   # Replace <replace-with-actual-key> with the actual AI Search admin key
+vi .env   # Update endpoints (auth uses Managed Identity — no keys needed)
 ```
 
 ### Deploy
@@ -1236,7 +1236,7 @@ Both Function Apps receive the same 5 RBAC roles via System Assigned Managed Ide
 | Concern | Approach | Reasoning |
 |---------|----------|-----------|
 | **Authentication** | Managed Identity everywhere. `DefaultAzureCredential`. No API keys in code. | API keys can be leaked. Managed Identity is automatic, rotated by Azure, and cannot be leaked. |
-| **Search admin key** | The only key stored in app settings (`SEARCH_ADMIN_KEY`). | Required because AI Search SDK push doesn't support Managed Identity for data plane writes in all SDK versions. |
+| **Search auth** | Managed Identity (`DefaultAzureCredential`). No API keys. | RBAC roles: `Search Index Data Contributor` + `Search Service Contributor`. Zero keys to manage or rotate. |
 | **PII at rest** | Raw files in ADLS contain PII. Redacted text in AI Search does not. | Two-tier access: compliance team reads raw ADLS files, general users search the PII-redacted index. |
 | **PII in transit** | PII sent to Foundry endpoint over HTTPS (TLS 1.2, within Azure backbone). | Encrypted within Azure's network. No cross-region transfer. |
 | **Network** | All resources in East US. HTTPS-only. Traffic stays within Azure backbone. | No public internet exposure for AI service calls. |
@@ -1465,8 +1465,7 @@ For local development with `func start`, environment variables are read from `lo
 | `FOUNDRY_EMBEDDING_DIMENSIONS` | `3072` | Embedding vector dimensions |
 | `FOUNDRY_API_VERSION` | `2024-06-01` | Azure OpenAI API version |
 | `SEARCH_ENDPOINT` | `https://<search-service>.search.windows.net` | AI Search endpoint |
-| `SEARCH_INDEX_NAME` | `custom-kb-index` | Target search index |
-| `SEARCH_ADMIN_KEY` | (secret) | AI Search admin key (only key in the system) |
+| `SEARCH_INDEX_NAME` | `nfcu-rag-index` | Target search index |
 | `CHUNK_SIZE_TOKENS` | `1024` | Tokens per chunk |
 | `CHUNK_OVERLAP_TOKENS` | `200` | Token overlap between chunks |
 | `PII_ENABLED` | `true` | Enable/disable PII scanning |
@@ -1514,7 +1513,7 @@ When the app is **inactive**, ALL triggers are disabled (no processing, no wiki 
 ai-foundry-processing/
   README.md                    # This file
   .env                         # Environment variables for deployment (git-ignored, contains secrets)
-  .env.example                 # Template — copy to .env and fill in SEARCH_ADMIN_KEY
+  .env.example                 # Template — copy to .env and fill in endpoints
   local.settings.json          # Local dev settings for `func start` (git-ignored)
   function_app.py              # 6 triggers (EventGrid, Queue, Blob, 2 Timers, HTTP)
   host.json                    # 10-min timeout, queue config, blob config
@@ -1736,8 +1735,7 @@ Ask your organization's cloud/platform team for the following values. These map 
 | 12 | **Content Understanding analyzer** | `FOUNDRY_ANALYZER_ID` | `prebuilt-documentSearch` (requires gpt-4.1-mini + text-embedding-3-large deployed in Foundry) |
 | 13 | **AI Search service name** | `DEPLOY_SEARCH_SERVICE` | `<search-service>` |
 | 14 | **AI Search resource group** (for RBAC) | `DEPLOY_SEARCH_RG` | `<shared-rg>` |
-| 15 | **AI Search admin key** | `SEARCH_ADMIN_KEY` | (secret — only key in the system) |
-| 16 | **AI Search index name** | `SEARCH_INDEX_NAME` | `custom-kb-index` |
+| 15 | **AI Search index name** | `SEARCH_INDEX_NAME` | `nfcu-rag-index` |
 | 17 | **Wiki blob storage account** (if wiki sync is needed) | `WIKI_STORAGE_ACCOUNT_NAME` | `<wiki-storage>` |
 | 18 | **Wiki container name** | `WIKI_CONTAINER_NAME` | `devops-wiki-store` |
 | 19 | **Wiki storage resource group** (for RBAC) | `DEPLOY_WIKI_RG` | `<shared-rg>` |
@@ -1781,7 +1779,6 @@ vi .env
 # FOUNDRY_ANALYZER_ID=prebuilt-documentSearch
 # SEARCH_ENDPOINT=https://<ps-search-service>.search.windows.net
 # SEARCH_INDEX_NAME=<ps-index-name>
-# SEARCH_ADMIN_KEY=<ps-search-admin-key>
 # WIKI_STORAGE_ACCOUNT_NAME=<ps-wiki-storage>
 # WIKI_CONTAINER_NAME=<ps-wiki-container>
 
@@ -1897,7 +1894,7 @@ export WIKI_RG="<your-wiki-rg>"                            # default: <shared-rg
 # 3. Configure the per-app .env files (the deploy scripts read these for app settings)
 cd ai-foundry-processing
 cp .env.example .env
-vi .env   # Update FOUNDRY_ENDPOINT, SEARCH_ADMIN_KEY, SEARCH_ENDPOINT, etc. to match your resources
+vi .env   # Update FOUNDRY_ENDPOINT, SEARCH_ENDPOINT, etc. to match your resources
 cd ..
 
 cd custom-processing

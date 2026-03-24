@@ -39,7 +39,7 @@ class CustomDocPipeline:
             chunk_overlap=int(os.environ.get("CHUNK_OVERLAP_TOKENS", "200")),
         )
         self.pii_scanner = PiiScanner(
-            confidence_threshold=float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.5")),
+            confidence_threshold=float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.8")),
             enabled=os.environ.get("PII_ENABLED", "true").lower() == "true",
         )
         self.embedder = FoundryEmbedder()
@@ -61,8 +61,13 @@ class CustomDocPipeline:
             logger.error(f"[CustomDocPipeline] Failed to read blob: {e}")
             return {"status": "error", "stage": "read", "error": str(e)}
 
+        # Always read metadata sidecar — sidecar values (e.g. SharePoint source_url) override trigger defaults
         if metadata is None:
-            metadata = self.adls.read_metadata_sidecar(container, blob_path)
+            metadata = {}
+        sidecar = self.adls.read_metadata_sidecar(container, blob_path)
+        for key, value in sidecar.items():
+            if value:  # Sidecar values take precedence over trigger-provided defaults
+                metadata[key] = value
 
         metadata.setdefault("file_name", file_name)
         metadata.setdefault("file_path", blob_path)

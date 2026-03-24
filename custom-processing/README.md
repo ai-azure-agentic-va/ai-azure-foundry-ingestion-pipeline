@@ -21,10 +21,10 @@ Cost-optimized document processing using 100% open-source Python libraries for p
 ### Configure Environment Variables
 
 ```bash
-# Copy the template and fill in SEARCH_ADMIN_KEY (the only secret)
+# Copy the template and fill in your Azure resource endpoints
 cd custom-processing
 cp .env.example .env
-vi .env   # Replace <replace-with-actual-key> with the actual AI Search admin key
+vi .env   # Update endpoints (auth uses Managed Identity — no keys needed)
 ```
 
 ### Deploy
@@ -118,7 +118,7 @@ See [ai-foundry-processing/README.md](../ai-foundry-processing/README.md) for th
 custom-processing/
   deploy.sh                    # Deploy this Function App (create, RBAC, settings, publish)
   .env                         # Environment variables for deployment (git-ignored, contains secrets)
-  .env.example                 # Template — copy to .env and fill in SEARCH_ADMIN_KEY
+  .env.example                 # Template — copy to .env and fill in endpoints
   local.settings.json          # Local dev settings for `func start` (git-ignored)
   function_app.py              # 4 triggers (EventGrid, Queue, Blob, HTTP)
   host.json                    # 10-min timeout, queue + blob config

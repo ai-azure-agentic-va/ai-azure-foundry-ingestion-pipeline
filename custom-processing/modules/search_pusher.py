@@ -1,37 +1,120 @@
 """Push chunks to Azure AI Search index using the SDK (merge_or_upload for idempotent upserts).
+Creates the index automatically if it does not exist.
 No indexers, no skillsets, no data sources - push-only model."""
 
 import logging
 import os
 
 from azure.search.documents import SearchClient
-from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    SearchIndex,
+    SearchField,
+    SearchFieldDataType,
+    SimpleField,
+    SearchableField,
+    VectorSearch,
+    HnswAlgorithmConfiguration,
+    VectorSearchProfile,
+    SemanticConfiguration,
+    SemanticSearch,
+    SemanticPrioritizedFields,
+    SemanticField,
+)
+from azure.identity import DefaultAzureCredential
 
 logger = logging.getLogger(__name__)
 
+# Vector dimensions for text-embedding-3-small
+VECTOR_DIMENSIONS = 1536
+
+
+def _build_index_schema(index_name: str) -> SearchIndex:
+    """Build the AI Search index schema matching the ingestion pipeline output."""
+    fields = [
+        SimpleField(name="id", type=SearchFieldDataType.String, key=True, filterable=True),
+        SearchableField(name="chunk_content", type=SearchFieldDataType.String, analyzer_name="en.microsoft"),
+        SearchField(
+            name="content_vector",
+            type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+            searchable=True,
+            hidden=False,
+            vector_search_dimensions=VECTOR_DIMENSIONS,
+            vector_search_profile_name="default-vector-profile",
+        ),
+        SearchableField(name="document_title", type=SearchFieldDataType.String, filterable=True, sortable=True, analyzer_name="en.microsoft"),
+        SimpleField(name="source_url", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="source_type", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SimpleField(name="file_name", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="chunk_index", type=SearchFieldDataType.Int32, filterable=True, sortable=True),
+        SimpleField(name="total_chunks", type=SearchFieldDataType.Int32, filterable=True),
+        SimpleField(name="page_number", type=SearchFieldDataType.Int32, filterable=True, sortable=True),
+        SimpleField(name="last_modified", type=SearchFieldDataType.String, filterable=True, sortable=True),
+        SimpleField(name="ingested_at", type=SearchFieldDataType.String, filterable=True, sortable=True),
+        SimpleField(name="pii_redacted", type=SearchFieldDataType.Boolean, filterable=True, facetable=True),
+    ]
+
+    vector_search = VectorSearch(
+        algorithms=[HnswAlgorithmConfiguration(name="default-hnsw", parameters={"m": 4, "efConstruction": 400, "efSearch": 500, "metric": "cosine"})],
+        profiles=[VectorSearchProfile(name="default-vector-profile", algorithm_configuration_name="default-hnsw")],
+    )
+
+    semantic_config = SemanticConfiguration(
+        name="custom-kb-semantic-config",
+        prioritized_fields=SemanticPrioritizedFields(
+            content_fields=[SemanticField(field_name="chunk_content")],
+            title_field=SemanticField(field_name="document_title"),
+        ),
+    )
+    semantic_search = SemanticSearch(configurations=[semantic_config])
+
+    return SearchIndex(
+        name=index_name,
+        fields=fields,
+        vector_search=vector_search,
+        semantic_search=semantic_search,
+    )
+
 
 class SearchPusher:
-    """Push document chunks to Azure AI Search custom-kb-index."""
+    """Push document chunks to Azure AI Search. Creates index if it doesn't exist."""
 
     def __init__(
         self,
         endpoint: str | None = None,
         index_name: str | None = None,
-        admin_key: str | None = None,
     ):
         self.endpoint = endpoint or os.environ.get("SEARCH_ENDPOINT")
-        self.index_name = index_name or os.environ.get("SEARCH_INDEX_NAME", "custom-kb-index")
-        self.admin_key = admin_key or os.environ.get("SEARCH_ADMIN_KEY")
+        self.index_name = index_name or os.environ.get("SEARCH_INDEX_NAME", "nfcu-rag-index")
 
-        if not self.endpoint or not self.admin_key:
-            raise ValueError("SEARCH_ENDPOINT and SEARCH_ADMIN_KEY are required")
+        if not self.endpoint:
+            raise ValueError("SEARCH_ENDPOINT is required")
 
+        credential = DefaultAzureCredential()
+
+        self._index_client = SearchIndexClient(
+            endpoint=self.endpoint,
+            credential=credential,
+        )
         self.client = SearchClient(
             endpoint=self.endpoint,
             index_name=self.index_name,
-            credential=AzureKeyCredential(self.admin_key),
+            credential=credential,
         )
+
+        self.ensure_index_exists()
         logger.info(f"[SearchPusher] Initialized: endpoint={self.endpoint}, index={self.index_name}")
+
+    def ensure_index_exists(self):
+        """Create the search index if it does not already exist."""
+        try:
+            self._index_client.get_index(self.index_name)
+            logger.info(f"[SearchPusher] Index '{self.index_name}' already exists")
+        except Exception:
+            logger.info(f"[SearchPusher] Index '{self.index_name}' not found — creating...")
+            index_schema = _build_index_schema(self.index_name)
+            self._index_client.create_index(index_schema)
+            logger.info(f"[SearchPusher] Index '{self.index_name}' created successfully")
 
     def push(self, chunks: list[dict], batch_size: int = 100) -> dict:
         """Push chunks to AI Search using merge_or_upload for idempotent upserts.

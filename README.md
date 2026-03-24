@@ -114,7 +114,7 @@ These Azure resources must exist before deploying:
 ```bash
 cd ai-foundry-processing
 cp .env.example .env
-# Edit .env -- fill in your Azure resource names and SEARCH_ADMIN_KEY
+# Edit .env -- fill in your Azure resource endpoints (auth uses Managed Identity)
 ```
 
 ### 3. Deploy
