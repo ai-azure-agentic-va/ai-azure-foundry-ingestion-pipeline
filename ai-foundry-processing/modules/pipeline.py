@@ -96,7 +96,9 @@ class FoundryDocPipeline:
         try:
             is_markdown = file_name.lower().endswith((".md", ".markdown"))
             chunker = self.md_chunker if is_markdown else self.token_chunker
-            chunks = chunker.chunk(parse_result.full_text, metadata)
+            # For markdown, pass parser-extracted sections so chunker uses AST sections
+            chunk_metadata = {**metadata, **parse_result.metadata} if is_markdown else metadata
+            chunks = chunker.chunk(parse_result.full_text, chunk_metadata)
             if not chunks:
                 logger.warning(f"[FoundryDocPipeline] No chunks produced for {file_name}")
                 return {"status": "skipped", "reason": "no_chunks_produced"}

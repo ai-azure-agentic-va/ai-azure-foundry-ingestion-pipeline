@@ -6,10 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 import tiktoken
-from langchain_text_splitters import (
-    RecursiveCharacterTextSplitter,
-    MarkdownHeaderTextSplitter,
-)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +52,14 @@ class TokenChunker:
 
 
 class MarkdownChunker:
-    """Split markdown by headers first, then by token size. For .md files."""
+    """Split markdown using pre-parsed sections from MarkdownParser (mistune AST).
+
+    Expects metadata["sections"] from MarkdownParser — already split by headers
+    with "Section: H1 > H2" prefixes. Falls back to plain token splitting if
+    sections aren't available.
+    """
 
     def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200):
-        self.header_splitter = MarkdownHeaderTextSplitter(
-            headers_to_split_on=[
-                ("#", "heading_1"),
-                ("##", "heading_2"),
-                ("###", "heading_3"),
-            ]
-        )
         self.token_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
             encoding_name="cl100k_base",
             chunk_size=chunk_size,
@@ -76,16 +71,20 @@ class MarkdownChunker:
             logger.warning("[MarkdownChunker] Empty text, returning no chunks")
             return []
 
-        # Split by markdown headers to preserve structure
-        header_splits = self.header_splitter.split_text(text)
+        # Use pre-parsed sections from MarkdownParser if available
+        sections = metadata.get("sections", [])
 
-        # Then split large sections by token size
         all_chunks = []
-        for section in header_splits:
-            sub_chunks = self.token_splitter.split_text(section.page_content)
-            all_chunks.extend(sub_chunks)
-
-        logger.info(f"[MarkdownChunker] Split into {len(all_chunks)} chunks from {len(header_splits)} sections")
+        if sections:
+            # Sections already have "Section: H1 > H2\n\nbody" prefix from parser
+            for section in sections:
+                sub_chunks = self.token_splitter.split_text(section)
+                all_chunks.extend(sub_chunks)
+            logger.info(f"[MarkdownChunker] Split into {len(all_chunks)} chunks from {len(sections)} AST sections")
+        else:
+            # Fallback: plain token splitting (no header context)
+            all_chunks = self.token_splitter.split_text(text)
+            logger.info(f"[MarkdownChunker] Fallback split into {len(all_chunks)} chunks (no AST sections)")
 
         return [
             {
