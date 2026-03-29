@@ -1,8 +1,18 @@
 """Token-based text chunking using tiktoken + langchain splitters.
-No Azure AI services - all local computation."""
+No Azure AI services - all local computation.
+
+Chunking strategy is configurable per file type via env vars:
+  CHUNK_STRATEGY_MD=header_based     (default: header_based)
+  CHUNK_STRATEGY_XLSX=sheet_based    (default: sheet_based — falls back to recursive until implemented)
+  CHUNK_STRATEGY_PDF=semantic        (default: recursive — falls back to recursive until implemented)
+  CHUNK_STRATEGY_DEFAULT=recursive   (default: recursive)
+  CHUNK_SIZE_TOKENS=1024             (default: 1024)
+  CHUNK_OVERLAP_TOKENS=200           (default: 200)
+"""
 
 import base64
 import logging
+import os
 from datetime import datetime, timezone
 
 import tiktoken
@@ -103,6 +113,55 @@ class MarkdownChunker:
             }
             for i, chunk in enumerate(all_chunks)
         ]
+
+
+class ChunkerFactory:
+    """Route to the correct chunking strategy based on file extension and env config."""
+
+    def __init__(self):
+        self.chunk_size = int(os.environ.get("CHUNK_SIZE_TOKENS", "1024"))
+        self.chunk_overlap = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "200"))
+
+        self.strategies = {
+            ".md": os.environ.get("CHUNK_STRATEGY_MD", "header_based"),
+            ".markdown": os.environ.get("CHUNK_STRATEGY_MD", "header_based"),
+            ".xlsx": os.environ.get("CHUNK_STRATEGY_XLSX", "sheet_based"),
+            ".xls": os.environ.get("CHUNK_STRATEGY_XLSX", "sheet_based"),
+            ".xlsm": os.environ.get("CHUNK_STRATEGY_XLSX", "sheet_based"),
+            ".pdf": os.environ.get("CHUNK_STRATEGY_PDF", "recursive"),
+            "default": os.environ.get("CHUNK_STRATEGY_DEFAULT", "recursive"),
+        }
+
+        self._recursive = TokenChunker(self.chunk_size, self.chunk_overlap)
+        self._header_based = MarkdownChunker(self.chunk_size, self.chunk_overlap)
+
+        logger.info(
+            f"[ChunkerFactory] Initialized: size={self.chunk_size}, "
+            f"overlap={self.chunk_overlap}, strategies={self.strategies}"
+        )
+
+    def get_chunker(self, file_extension: str):
+        """Return the appropriate chunker for a file extension."""
+        ext = file_extension.lower()
+        strategy = self.strategies.get(ext, self.strategies["default"])
+
+        if strategy == "header_based":
+            return self._header_based
+        elif strategy == "sheet_based":
+            # TODO: implement SheetChunker for xlsx row/sheet-based splitting
+            logger.debug(f"[ChunkerFactory] sheet_based not yet implemented for '{ext}', using recursive")
+            return self._recursive
+        elif strategy == "semantic":
+            # TODO: implement SemanticChunker for page-boundary-aware splitting
+            logger.debug(f"[ChunkerFactory] semantic not yet implemented for '{ext}', using recursive")
+            return self._recursive
+        else:
+            return self._recursive
+
+    def chunk(self, text: str, metadata: dict, file_extension: str) -> list[dict]:
+        """Chunk text using the strategy configured for this file type."""
+        chunker = self.get_chunker(file_extension)
+        return chunker.chunk(text, metadata)
 
 
 def _make_chunk_id(file_path: str, chunk_index: int) -> str:

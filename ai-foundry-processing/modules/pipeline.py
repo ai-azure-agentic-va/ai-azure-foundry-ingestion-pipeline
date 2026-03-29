@@ -14,7 +14,7 @@ import os
 from .adls_reader import AdlsReader
 from .foundry_parser import FoundryParser
 from .foundry_pii_scanner import FoundryPiiScanner
-from .chunker import TokenChunker, MarkdownChunker
+from .chunker import ChunkerFactory
 from .embedder import FoundryEmbedder
 from .search_pusher import SearchPusher
 
@@ -36,14 +36,7 @@ class FoundryDocPipeline:
     def __init__(self):
         self.adls = AdlsReader()
         self.parser = FoundryParser()
-        self.token_chunker = TokenChunker(
-            chunk_size=int(os.environ.get("CHUNK_SIZE_TOKENS", "1024")),
-            chunk_overlap=int(os.environ.get("CHUNK_OVERLAP_TOKENS", "200")),
-        )
-        self.md_chunker = MarkdownChunker(
-            chunk_size=int(os.environ.get("CHUNK_SIZE_TOKENS", "1024")),
-            chunk_overlap=int(os.environ.get("CHUNK_OVERLAP_TOKENS", "200")),
-        )
+        self.chunker_factory = ChunkerFactory()
         self.pii_scanner = FoundryPiiScanner(
             confidence_threshold=float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.8")),
             enabled=os.environ.get("PII_ENABLED", "true").lower() == "true",
@@ -92,13 +85,13 @@ class FoundryDocPipeline:
             self.adls.move_to_failed(blob_path, f"Parse error: {e}")
             return {"status": "error", "stage": "parse", "error": str(e)}
 
-        # 3. Chunk text (tiktoken + langchain — same as custom path)
+        # 3. Chunk text (strategy selected by ChunkerFactory based on file extension)
         try:
-            is_markdown = file_name.lower().endswith((".md", ".markdown"))
-            chunker = self.md_chunker if is_markdown else self.token_chunker
-            # For markdown, pass parser-extracted sections so chunker uses AST sections
-            chunk_metadata = {**metadata, **parse_result.metadata} if is_markdown else metadata
-            chunks = chunker.chunk(parse_result.full_text, chunk_metadata)
+            ext = os.path.splitext(file_name)[1].lower()
+            # Merge parser metadata (sections, headers, tables, etc.) so chunkers
+            # can use structured data from any parser, not just markdown
+            chunk_metadata = {**metadata, **parse_result.metadata}
+            chunks = self.chunker_factory.chunk(parse_result.full_text, chunk_metadata, ext)
             if not chunks:
                 logger.warning(f"[FoundryDocPipeline] No chunks produced for {file_name}")
                 return {"status": "skipped", "reason": "no_chunks_produced"}
