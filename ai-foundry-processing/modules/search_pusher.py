@@ -16,6 +16,8 @@ from azure.search.documents.indexes.models import (
     VectorSearch,
     HnswAlgorithmConfiguration,
     VectorSearchProfile,
+    AzureOpenAIVectorizer,
+    AzureOpenAIVectorizerParameters,
     SemanticConfiguration,
     SemanticSearch,
     SemanticPrioritizedFields,
@@ -27,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 # Vector dimensions for text-embedding-3-small
 VECTOR_DIMENSIONS = 1536
+
+# Integrated vectorizer config — auto-vectorizes raw text queries at search time
+AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
+AZURE_OPENAI_EMBEDDING_MODEL = os.environ.get("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
 
 def _build_index_schema(index_name: str) -> SearchIndex:
@@ -54,9 +61,27 @@ def _build_index_schema(index_name: str) -> SearchIndex:
         SimpleField(name="pii_redacted", type=SearchFieldDataType.Boolean, filterable=True, facetable=True),
     ]
 
+    # Integrated vectorizer — without this, Azure AI Search cannot auto-vectorize
+    # raw text queries and silently falls back to BM25 keyword search
+    vectorizer = None
+    if AZURE_OPENAI_ENDPOINT:
+        vectorizer = AzureOpenAIVectorizer(
+            vectorizer_name="default-openai-vectorizer",
+            parameters=AzureOpenAIVectorizerParameters(
+                resource_url=AZURE_OPENAI_ENDPOINT,
+                deployment_name=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+                model_name=AZURE_OPENAI_EMBEDDING_MODEL,
+            ),
+        )
+
     vector_search = VectorSearch(
         algorithms=[HnswAlgorithmConfiguration(name="default-hnsw", parameters={"m": 4, "efConstruction": 400, "efSearch": 500, "metric": "cosine"})],
-        profiles=[VectorSearchProfile(name="default-vector-profile", algorithm_configuration_name="default-hnsw")],
+        profiles=[VectorSearchProfile(
+            name="default-vector-profile",
+            algorithm_configuration_name="default-hnsw",
+            vectorizer_name="default-openai-vectorizer" if vectorizer else None,
+        )],
+        vectorizers=[vectorizer] if vectorizer else [],
     )
 
     semantic_config = SemanticConfiguration(

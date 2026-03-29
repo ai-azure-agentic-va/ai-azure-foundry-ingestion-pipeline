@@ -185,6 +185,12 @@ def process_blob_document(blob: func.InputStream):
     Simplest trigger mode -- no Event Grid or Queue infrastructure required.
     The blob trigger polls the container for changes directly.
     """
+    # Skip folder creation events — only process actual files
+    blob_meta = blob.metadata or {}
+    if blob_meta.get("hdi_isfolder") == "true":
+        logger.info(f"[BlobTrigger] Skipping folder creation event: {blob.name}")
+        return
+
     blob_name = blob.name or ""
     content_type = ""
     content_length = blob.length or 0
