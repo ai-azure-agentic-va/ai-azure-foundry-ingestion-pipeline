@@ -161,14 +161,21 @@ az role assignment create \
   --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$FOUNDRY_RG/providers/Microsoft.CognitiveServices/accounts/$FOUNDRY_ACCOUNT" \
   -o none 2>/dev/null || echo "    (role may already exist)"
 
-# 3. Search Index Data Contributor on AI Search
+# 3. Search Index Data Contributor on AI Search (read/write documents in indexes)
 az role assignment create \
   --assignee "$FOUNDRY_PRINCIPAL_ID" \
   --role "Search Index Data Contributor" \
   --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$SEARCH_RG/providers/Microsoft.Search/searchServices/$SEARCH_SERVICE" \
   -o none 2>/dev/null || echo "    (role may already exist)"
 
-# 4. Storage Queue Data Contributor on ADLS (for queue-based triggering)
+# 4. Search Service Contributor on AI Search (create/manage indexes)
+az role assignment create \
+  --assignee "$FOUNDRY_PRINCIPAL_ID" \
+  --role "Search Service Contributor" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$SEARCH_RG/providers/Microsoft.Search/searchServices/$SEARCH_SERVICE" \
+  -o none 2>/dev/null || echo "    (role may already exist)"
+
+# 5. Storage Queue Data Contributor on ADLS (for queue-based triggering)
 az role assignment create \
   --assignee "$FOUNDRY_PRINCIPAL_ID" \
   --role "Storage Queue Data Contributor" \
