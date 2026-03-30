@@ -24,6 +24,7 @@ Configurable env vars for triggers:
 import json
 import logging
 import os
+import threading
 
 import azure.functions as func
 
@@ -32,18 +33,21 @@ app = func.FunctionApp()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")))
 
-# Lazy-loaded pipeline (avoid cold-start penalty on import)
+# Lazy-loaded pipeline with thread-safe double-checked locking
 _pipeline = None
+_pipeline_lock = threading.Lock()
 
 
 def _get_pipeline():
-    """Get the FoundryDocPipeline instance."""
+    """Get the FoundryDocPipeline instance (thread-safe)."""
     global _pipeline
     if _pipeline is None:
-        from modules.pipeline import FoundryDocPipeline
+        with _pipeline_lock:
+            if _pipeline is None:
+                from modules.pipeline import FoundryDocPipeline
 
-        _pipeline = FoundryDocPipeline()
-        logger.info(f"[Functions] Pipeline initialized: {_pipeline.PIPELINE_NAME}")
+                _pipeline = FoundryDocPipeline()
+                logger.info(f"[Functions] Pipeline initialized: {_pipeline.PIPELINE_NAME}")
     return _pipeline
 
 
