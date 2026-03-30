@@ -41,6 +41,7 @@ def _get_pipeline():
     global _pipeline
     if _pipeline is None:
         from modules.pipeline import FoundryDocPipeline
+
         _pipeline = FoundryDocPipeline()
         logger.info(f"[Functions] Pipeline initialized: {_pipeline.PIPELINE_NAME}")
     return _pipeline
@@ -88,7 +89,9 @@ def process_new_document(event: func.EventGridEvent):
     """Triggered by BlobCreated on ADLS raw-documents container.
     Uses FoundryDocPipeline (Content Understanding, Azure Language PII)."""
 
-    logger.info(f"[EventGrid] Received event: {event.event_type}, subject: {event.subject}")
+    logger.info(
+        f"[EventGrid] Received event: {event.event_type}, subject: {event.subject}"
+    )
 
     data = event.get_json()
     info = _extract_blob_info(data)
@@ -97,7 +100,9 @@ def process_new_document(event: func.EventGridEvent):
 
     container, blob_path, content_type, content_length = info
 
-    logger.info(f"[EventGrid] Processing: {blob_path} ({content_length} bytes, {content_type})")
+    logger.info(
+        f"[EventGrid] Processing: {blob_path} ({content_length} bytes, {content_type})"
+    )
 
     metadata = {
         "source_url": data.get("url", ""),
@@ -212,7 +217,7 @@ def process_blob_document(blob: func.InputStream):
     # blob.name includes container prefix from path binding: "raw-documents/{name}"
     # Strip container prefix if present
     if blob_name.startswith(f"{container}/"):
-        blob_path = blob_name[len(f"{container}/"):]
+        blob_path = blob_name[len(f"{container}/") :]
     else:
         blob_path = blob_name
 
@@ -238,12 +243,14 @@ def process_blob_document(blob: func.InputStream):
 def health_check(req: func.HttpRequest) -> func.HttpResponse:
     """Health check endpoint. Reports active processing path and trigger mode."""
     return func.HttpResponse(
-        json.dumps({
-            "status": "healthy",
-            "service": os.environ.get("FUNCTION_APP_NAME", "ai-foundry-processing"),
-            "processing_path": "AI_FOUNDRY_SERVICES",
-            "trigger_mode": os.environ.get("TRIGGER_MODE", "BLOB"),
-        }),
+        json.dumps(
+            {
+                "status": "healthy",
+                "service": os.environ.get("FUNCTION_APP_NAME", "ai-foundry-processing"),
+                "processing_path": "AI_FOUNDRY_SERVICES",
+                "trigger_mode": os.environ.get("TRIGGER_MODE", "BLOB"),
+            }
+        ),
         status_code=200,
         mimetype="application/json",
     )

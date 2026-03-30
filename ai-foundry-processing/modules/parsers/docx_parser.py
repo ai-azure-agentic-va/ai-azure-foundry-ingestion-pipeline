@@ -32,7 +32,9 @@ class DocxParser(BaseParser):
         if tables_text:
             full_text += "\n\n" + "\n\n".join(tables_text)
 
-        logger.info(f"[DocxParser] Extracted {len(paragraphs)} paragraphs, {len(tables_text)} tables, {len(full_text)} chars")
+        logger.info(
+            f"[DocxParser] Extracted {len(paragraphs)} paragraphs, {len(tables_text)} tables, {len(full_text)} chars"
+        )
         return ParseResult(
             full_text=full_text,
             pages=[],

@@ -20,11 +20,15 @@ def _get_text_client():
         from azure.identity import DefaultAzureCredential
         from azure.core.credentials import AzureKeyCredential
 
-        endpoint = os.environ.get("FOUNDRY_PII_ENDPOINT") or os.environ.get("FOUNDRY_ENDPOINT")
+        endpoint = os.environ.get("FOUNDRY_PII_ENDPOINT") or os.environ.get(
+            "FOUNDRY_ENDPOINT"
+        )
         api_key = os.environ.get("FOUNDRY_PII_KEY")
 
         if not endpoint:
-            raise ValueError("FOUNDRY_ENDPOINT or FOUNDRY_PII_ENDPOINT is required for FoundryPiiScanner")
+            raise ValueError(
+                "FOUNDRY_ENDPOINT or FOUNDRY_PII_ENDPOINT is required for FoundryPiiScanner"
+            )
 
         if api_key:
             credential = AzureKeyCredential(api_key)
@@ -35,7 +39,9 @@ def _get_text_client():
             endpoint=endpoint,
             credential=credential,
         )
-        logger.info(f"[FoundryPiiScanner] TextAnalyticsClient initialized: endpoint={endpoint}")
+        logger.info(
+            f"[FoundryPiiScanner] TextAnalyticsClient initialized: endpoint={endpoint}"
+        )
     return _text_client
 
 
@@ -60,9 +66,22 @@ _CATEGORY_LABELS = {
 # Domain-specific terms that should never be redacted even if flagged by the model.
 # Case-insensitive matching.
 _DOMAIN_ALLOWLIST = {
-    "merchant", "customer", "member", "borrower", "vendor", "applicant",
-    "cardholder", "accountholder", "beneficiary", "guarantor", "co-signer",
-    "navy federal", "nfcu", "visa", "mastercard", "american express",
+    "merchant",
+    "customer",
+    "member",
+    "borrower",
+    "vendor",
+    "applicant",
+    "cardholder",
+    "accountholder",
+    "beneficiary",
+    "guarantor",
+    "co-signer",
+    "navy federal",
+    "nfcu",
+    "visa",
+    "mastercard",
+    "american express",
 }
 
 
@@ -103,7 +122,9 @@ class FoundryPiiScanner:
 
             doc_result = result[0]
             if doc_result.is_error:
-                logger.error(f"[FoundryPiiScanner] API error: {doc_result.error.message}")
+                logger.error(
+                    f"[FoundryPiiScanner] API error: {doc_result.error.message}"
+                )
                 return self._fallback_scan(text)
 
             if not doc_result.entities:
@@ -111,7 +132,8 @@ class FoundryPiiScanner:
 
             # Filter by: supported category, confidence threshold, and domain allowlist
             entities = [
-                e for e in doc_result.entities
+                e
+                for e in doc_result.entities
                 if e.category in _CATEGORY_LABELS
                 and e.confidence_score >= self.confidence_threshold
                 and e.text.lower() not in _DOMAIN_ALLOWLIST
@@ -169,7 +191,7 @@ class FoundryPiiScanner:
         chunk_size = 5000  # Leave margin under 5120 limit
         chunks = []
         for i in range(0, len(text), chunk_size):
-            chunks.append(text[i:i + chunk_size])
+            chunks.append(text[i : i + chunk_size])
 
         all_entities = []
         has_pii = False
@@ -181,27 +203,35 @@ class FoundryPiiScanner:
 
         for chunk_idx, doc_result in enumerate(results):
             if doc_result.is_error:
-                logger.warning(f"[FoundryPiiScanner] Chunk {chunk_idx} error: {doc_result.error.message}")
+                logger.warning(
+                    f"[FoundryPiiScanner] Chunk {chunk_idx} error: {doc_result.error.message}"
+                )
                 continue
 
             offset_base = chunk_idx * chunk_size
             for entity in doc_result.entities:
-                if (entity.category in _CATEGORY_LABELS
-                        and entity.confidence_score >= self.confidence_threshold
-                        and entity.text.lower() not in _DOMAIN_ALLOWLIST):
+                if (
+                    entity.category in _CATEGORY_LABELS
+                    and entity.confidence_score >= self.confidence_threshold
+                    and entity.text.lower() not in _DOMAIN_ALLOWLIST
+                ):
                     has_pii = True
-                    all_entities.append({
-                        "entity": entity,
-                        "global_offset": offset_base + entity.offset,
-                        "length": entity.length,
-                    })
+                    all_entities.append(
+                        {
+                            "entity": entity,
+                            "global_offset": offset_base + entity.offset,
+                            "length": entity.length,
+                        }
+                    )
 
         if not has_pii:
             return text, False, []
 
         # Apply redactions from end to start
         redacted = text
-        sorted_entities = sorted(all_entities, key=lambda e: e["global_offset"], reverse=True)
+        sorted_entities = sorted(
+            all_entities, key=lambda e: e["global_offset"], reverse=True
+        )
         for ent_info in sorted_entities:
             entity = ent_info["entity"]
             label = _CATEGORY_LABELS.get(entity.category, "[PII REDACTED]")
@@ -219,11 +249,15 @@ class FoundryPiiScanner:
             for e in sorted_entities
         ]
 
-        logger.info(f"[FoundryPiiScanner] Long text: found {len(detected)} PII entities across {len(chunks)} chunks")
+        logger.info(
+            f"[FoundryPiiScanner] Long text: found {len(detected)} PII entities across {len(chunks)} chunks"
+        )
         return redacted, True, detected
 
     def _fallback_scan(self, text: str) -> tuple[str, bool, list[dict]]:
         """Return text unmodified when Azure AI Language fails.
         No Presidio fallback in this Function App (spaCy not installed)."""
-        logger.warning("[FoundryPiiScanner] Azure PII scan failed, returning text without redaction")
+        logger.warning(
+            "[FoundryPiiScanner] Azure PII scan failed, returning text without redaction"
+        )
         return text, False, []

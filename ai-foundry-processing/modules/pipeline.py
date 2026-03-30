@@ -38,16 +38,22 @@ class FoundryDocPipeline:
         self.parser = FoundryParser()
         self.chunker_factory = ChunkerFactory()
         self.pii_scanner = FoundryPiiScanner(
-            confidence_threshold=float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.8")),
+            confidence_threshold=float(
+                os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.8")
+            ),
             enabled=os.environ.get("PII_ENABLED", "true").lower() == "true",
         )
         self.embedder = FoundryEmbedder()
         self.pusher = SearchPusher()
 
-        logger.info("[FoundryDocPipeline] Initialized "
-                    "(Content Understanding + Azure Language PII)")
+        logger.info(
+            "[FoundryDocPipeline] Initialized "
+            "(Content Understanding + Azure Language PII)"
+        )
 
-    def process_document(self, container: str, blob_path: str, metadata: dict | None = None) -> dict:
+    def process_document(
+        self, container: str, blob_path: str, metadata: dict | None = None
+    ) -> dict:
         """Process a single document through the AI Foundry pipeline."""
         file_name = os.path.basename(blob_path)
         logger.info(f"[FoundryDocPipeline] START: {container}/{blob_path}")
@@ -55,7 +61,9 @@ class FoundryDocPipeline:
         # 1. Read document from ADLS
         try:
             file_bytes = self.adls.read_blob(container, blob_path)
-            logger.info(f"[FoundryDocPipeline] [1/6] Read {len(file_bytes)} bytes from ADLS")
+            logger.info(
+                f"[FoundryDocPipeline] [1/6] Read {len(file_bytes)} bytes from ADLS"
+            )
         except Exception as e:
             logger.error(f"[FoundryDocPipeline] Failed to read blob: {e}")
             return {"status": "error", "stage": "read", "error": str(e)}
@@ -76,10 +84,14 @@ class FoundryDocPipeline:
         try:
             parse_result = self.parser.parse(file_bytes, file_name)
             if not parse_result.full_text.strip():
-                logger.warning(f"[FoundryDocPipeline] No text extracted from {file_name}")
+                logger.warning(
+                    f"[FoundryDocPipeline] No text extracted from {file_name}"
+                )
                 return {"status": "skipped", "reason": "no_text_extracted"}
-            logger.info(f"[FoundryDocPipeline] [2/6] Parsed: "
-                        f"{len(parse_result.full_text)} chars, {parse_result.page_count} pages")
+            logger.info(
+                f"[FoundryDocPipeline] [2/6] Parsed: "
+                f"{len(parse_result.full_text)} chars, {parse_result.page_count} pages"
+            )
         except Exception as e:
             logger.error(f"[FoundryDocPipeline] Parse failed for {file_name}: {e}")
             self.adls.move_to_failed(blob_path, f"Parse error: {e}")
@@ -91,9 +103,13 @@ class FoundryDocPipeline:
             # Merge parser metadata (sections, headers, tables, etc.) so chunkers
             # can use structured data from any parser, not just markdown
             chunk_metadata = {**metadata, **parse_result.metadata}
-            chunks = self.chunker_factory.chunk(parse_result.full_text, chunk_metadata, ext)
+            chunks = self.chunker_factory.chunk(
+                parse_result.full_text, chunk_metadata, ext
+            )
             if not chunks:
-                logger.warning(f"[FoundryDocPipeline] No chunks produced for {file_name}")
+                logger.warning(
+                    f"[FoundryDocPipeline] No chunks produced for {file_name}"
+                )
                 return {"status": "skipped", "reason": "no_chunks_produced"}
             logger.info(f"[FoundryDocPipeline] [3/6] Chunked: {len(chunks)} chunks")
         except Exception as e:
@@ -105,12 +121,16 @@ class FoundryDocPipeline:
         pii_count = 0
         try:
             for chunk in chunks:
-                redacted_text, pii_found, entities = self.pii_scanner.scan_and_redact(chunk["chunk_content"])
+                redacted_text, pii_found, entities = self.pii_scanner.scan_and_redact(
+                    chunk["chunk_content"]
+                )
                 chunk["chunk_content"] = redacted_text
                 chunk["pii_redacted"] = pii_found
                 if pii_found:
                     pii_count += 1
-            logger.info(f"[FoundryDocPipeline] [4/6] PII scan: {pii_count}/{len(chunks)} chunks had PII redacted")
+            logger.info(
+                f"[FoundryDocPipeline] [4/6] PII scan: {pii_count}/{len(chunks)} chunks had PII redacted"
+            )
         except Exception as e:
             logger.error(f"[FoundryDocPipeline] PII scan failed for {file_name}: {e}")
             logger.warning("[FoundryDocPipeline] Proceeding without PII redaction")
@@ -118,7 +138,9 @@ class FoundryDocPipeline:
         # 5. Generate embeddings (Foundry LLM)
         try:
             chunks = self.embedder.embed_chunks(chunks)
-            logger.info(f"[FoundryDocPipeline] [5/6] Embedded: {len(chunks)} chunks via Foundry LLM")
+            logger.info(
+                f"[FoundryDocPipeline] [5/6] Embedded: {len(chunks)} chunks via Foundry LLM"
+            )
         except Exception as e:
             logger.error(f"[FoundryDocPipeline] Embedding failed for {file_name}: {e}")
             self.adls.move_to_failed(blob_path, f"Embedding error: {e}")
@@ -127,14 +149,20 @@ class FoundryDocPipeline:
         # 6. Push to Azure AI Search
         try:
             result = self.pusher.push(chunks)
-            logger.info(f"[FoundryDocPipeline] [6/6] Pushed to AI Search: "
-                        f"{result['success']} succeeded, {result['failed']} failed")
+            logger.info(
+                f"[FoundryDocPipeline] [6/6] Pushed to AI Search: "
+                f"{result['success']} succeeded, {result['failed']} failed"
+            )
         except Exception as e:
-            logger.error(f"[FoundryDocPipeline] Push to search failed for {file_name}: {e}")
+            logger.error(
+                f"[FoundryDocPipeline] Push to search failed for {file_name}: {e}"
+            )
             self.adls.move_to_failed(blob_path, f"Search push error: {e}")
             return {"status": "error", "stage": "push", "error": str(e)}
 
-        logger.info(f"[FoundryDocPipeline] COMPLETE: {file_name} -> {result['success']} chunks indexed")
+        logger.info(
+            f"[FoundryDocPipeline] COMPLETE: {file_name} -> {result['success']} chunks indexed"
+        )
         return {
             "status": "success",
             "processing_path": self.PIPELINE_NAME,

@@ -24,7 +24,12 @@ logger = logging.getLogger(__name__)
 class TokenChunker:
     """Split text into token-sized chunks for standard documents (PDF, DOCX, etc.)."""
 
-    def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200, encoding: str = "cl100k_base"):
+    def __init__(
+        self,
+        chunk_size: int = 1024,
+        chunk_overlap: int = 200,
+        encoding: str = "cl100k_base",
+    ):
         self.encoding_name = encoding
         self.enc = tiktoken.get_encoding(encoding)
         self.splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
@@ -90,11 +95,15 @@ class MarkdownChunker:
             for section in sections:
                 sub_chunks = self.token_splitter.split_text(section)
                 all_chunks.extend(sub_chunks)
-            logger.info(f"[MarkdownChunker] Split into {len(all_chunks)} chunks from {len(sections)} AST sections")
+            logger.info(
+                f"[MarkdownChunker] Split into {len(all_chunks)} chunks from {len(sections)} AST sections"
+            )
         else:
             # Fallback: plain token splitting (no header context)
             all_chunks = self.token_splitter.split_text(text)
-            logger.info(f"[MarkdownChunker] Fallback split into {len(all_chunks)} chunks (no AST sections)")
+            logger.info(
+                f"[MarkdownChunker] Fallback split into {len(all_chunks)} chunks (no AST sections)"
+            )
 
         return [
             {
@@ -149,11 +158,15 @@ class ChunkerFactory:
             return self._header_based
         elif strategy == "sheet_based":
             # TODO: implement SheetChunker for xlsx row/sheet-based splitting
-            logger.debug(f"[ChunkerFactory] sheet_based not yet implemented for '{ext}', using recursive")
+            logger.debug(
+                f"[ChunkerFactory] sheet_based not yet implemented for '{ext}', using recursive"
+            )
             return self._recursive
         elif strategy == "semantic":
             # TODO: implement SemanticChunker for page-boundary-aware splitting
-            logger.debug(f"[ChunkerFactory] semantic not yet implemented for '{ext}', using recursive")
+            logger.debug(
+                f"[ChunkerFactory] semantic not yet implemented for '{ext}', using recursive"
+            )
             return self._recursive
         else:
             return self._recursive

@@ -22,7 +22,7 @@ class MarkdownParser(BaseParser):
 
     def __init__(self):
         # Table plugin required — without it, tables are parsed as plain paragraphs
-        self._md = mistune.create_markdown(renderer='ast', plugins=['table'])
+        self._md = mistune.create_markdown(renderer="ast", plugins=["table"])
 
     @property
     def supported_extensions(self) -> list[str]:
@@ -182,13 +182,21 @@ def _walk_ast(tokens: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
             pass  # skip whitespace and horizontal rules
 
         elif token_type == "block_quote":
-            inner = _extract_text(token.get("children", [])) if token.get("children") else ""
+            inner = (
+                _extract_text(token.get("children", []))
+                if token.get("children")
+                else ""
+            )
             if inner.strip():
                 current_section_body.append(inner)
 
         else:
             # Catch-all for other block types
-            text = _extract_text(token.get("children", [])) if token.get("children") else token.get("raw", "")
+            text = (
+                _extract_text(token.get("children", []))
+                if token.get("children")
+                else token.get("raw", "")
+            )
             if text.strip():
                 current_section_body.append(text)
 

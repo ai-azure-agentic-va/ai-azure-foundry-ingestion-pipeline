@@ -32,7 +32,9 @@ class XlsxParser(BaseParser):
         wb.close()
         full_text = "\n\n".join(sheets_text)
 
-        logger.info(f"[XlsxParser] Extracted {len(sheets_text)} sheets, {len(full_text)} chars")
+        logger.info(
+            f"[XlsxParser] Extracted {len(sheets_text)} sheets, {len(full_text)} chars"
+        )
         return ParseResult(
             full_text=full_text,
             pages=[],

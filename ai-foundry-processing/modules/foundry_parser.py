@@ -18,11 +18,13 @@ logger = logging.getLogger(__name__)
 # These formats don't need OCR, layout analysis, or figure verbalization.
 # Routing them directly to custom parsers avoids ~30s of wasted CU API timeout.
 _DIRECT_PARSE_EXTENSIONS = {
-    ".md", ".markdown",  # Markdown
-    ".txt", ".text",     # Plain text
-    ".csv",              # CSV (tabular text)
-    ".json",             # JSON
-    ".xml",              # XML
+    ".md",
+    ".markdown",  # Markdown
+    ".txt",
+    ".text",  # Plain text
+    ".csv",  # CSV (tabular text)
+    ".json",  # JSON
+    ".xml",  # XML
 }
 
 
@@ -106,7 +108,9 @@ class FoundryParser:
             )
             return self._fallback_parse(file_bytes, file_name)
 
-        logger.info(f"[FoundryParser] Analyzing '{file_name}' ({len(file_bytes)} bytes) with {self.analyzer_id}")
+        logger.info(
+            f"[FoundryParser] Analyzing '{file_name}' ({len(file_bytes)} bytes) with {self.analyzer_id}"
+        )
 
         try:
             client = self._get_client()
@@ -150,10 +154,12 @@ class FoundryParser:
             if isinstance(content, DocumentContent):
                 if content.pages:
                     for page in content.pages:
-                        pages.append({
-                            "page_number": page.page_number,
-                            "text": "",  # Full text lives in markdown, not per-page
-                        })
+                        pages.append(
+                            {
+                                "page_number": page.page_number,
+                                "text": "",  # Full text lives in markdown, not per-page
+                            }
+                        )
                 if content.tables:
                     table_count = len(content.tables)
                 if hasattr(content, "figures") and content.figures:
@@ -180,11 +186,14 @@ class FoundryParser:
             )
 
         except Exception as e:
-            logger.error(f"[FoundryParser] Content Understanding failed for '{file_name}': {e}")
+            logger.error(
+                f"[FoundryParser] Content Understanding failed for '{file_name}': {e}"
+            )
             logger.warning("[FoundryParser] Falling back to custom parser")
             return self._fallback_parse(file_bytes, file_name)
 
     def _fallback_parse(self, file_bytes: bytes, file_name: str):
         """Fall back to custom parser if Content Understanding fails or is skipped."""
         from .parsers import ParserFactory
+
         return ParserFactory.parse(file_bytes, file_name)

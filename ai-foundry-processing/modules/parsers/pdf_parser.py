@@ -31,13 +31,17 @@ class PdfParser(BaseParser):
                         df = table.to_pandas()
                         table_text += df.to_string(index=False) + "\n"
             except Exception as e:
-                logger.debug(f"[PdfParser] Table extraction skipped for page {page_num + 1}: {e}")
+                logger.debug(
+                    f"[PdfParser] Table extraction skipped for page {page_num + 1}: {e}"
+                )
 
-            pages.append({
-                "page_number": page_num + 1,
-                "text": text.strip(),
-                "table_text": table_text.strip(),
-            })
+            pages.append(
+                {
+                    "page_number": page_num + 1,
+                    "text": text.strip(),
+                    "table_text": table_text.strip(),
+                }
+            )
 
         doc.close()
 

@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 @dataclass
 class ParseResult:
     """Result of parsing a document."""
+
     full_text: str
     pages: list[dict] = field(default_factory=list)
     page_count: int = 1

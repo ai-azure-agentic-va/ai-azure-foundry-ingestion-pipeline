@@ -40,19 +40,26 @@ class PptxParser(BaseParser):
                     texts.append(f"[Speaker Notes] {notes}")
 
             if texts:
-                slides.append({
-                    "page_number": slide_num,
-                    "text": "\n".join(texts),
-                })
+                slides.append(
+                    {
+                        "page_number": slide_num,
+                        "text": "\n".join(texts),
+                    }
+                )
 
         full_text = "\n\n".join(
             f"Slide {s['page_number']}:\n{s['text']}" for s in slides
         )
 
-        logger.info(f"[PptxParser] Extracted {len(slides)} slides, {len(full_text)} chars")
+        logger.info(
+            f"[PptxParser] Extracted {len(slides)} slides, {len(full_text)} chars"
+        )
         return ParseResult(
             full_text=full_text,
-            pages=[{"page_number": s["page_number"], "text": s["text"], "table_text": ""} for s in slides],
+            pages=[
+                {"page_number": s["page_number"], "text": s["text"], "table_text": ""}
+                for s in slides
+            ],
             page_count=len(slides),
             metadata={"format": "pptx"},
         )
