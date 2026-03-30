@@ -79,6 +79,16 @@
   - `SheetChunker` for xlsx row/sheet-based splitting
   - `SemanticChunker` for page-boundary-aware splitting
 
+### MISSING Usecases
+
+- .xlsm is not supported as supported extension
+- Content understanding and doc intelligence needs to be used correctly with custom parsers.
+- Index creation needs to setup correctly with enabled vector search and predefined schema for index. 
+- _DOMAIN_ALLOWLIST needs to part of env. so can be configured without coding changes.
+- Batch size while generating embeddings needs to re-calculated and should be configured from env.
+- 
+
+
 ---
 
 ## Formatting Required
