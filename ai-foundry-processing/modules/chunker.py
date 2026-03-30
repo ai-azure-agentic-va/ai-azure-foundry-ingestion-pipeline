@@ -149,7 +149,7 @@ class ChunkerFactory:
             f"overlap={self.chunk_overlap}, strategies={self.strategies}"
         )
 
-    def get_chunker(self, file_extension: str):
+    def get_chunker(self, file_extension: str) -> TokenChunker | MarkdownChunker:
         """Return the appropriate chunker for a file extension."""
         ext = file_extension.lower()
         strategy = self.strategies.get(ext, self.strategies["default"])

@@ -198,10 +198,12 @@ class SearchPusher:
 
     def ensure_index_exists(self):
         """Create the search index if it does not already exist."""
+        from azure.core.exceptions import ResourceNotFoundError
+
         try:
             self._index_client.get_index(self.index_name)
             logger.info(f"[SearchPusher] Index '{self.index_name}' already exists")
-        except Exception:
+        except ResourceNotFoundError:
             logger.info(
                 f"[SearchPusher] Index '{self.index_name}' not found — creating..."
             )

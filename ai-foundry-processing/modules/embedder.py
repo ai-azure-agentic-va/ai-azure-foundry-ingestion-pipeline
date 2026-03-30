@@ -58,8 +58,12 @@ class FoundryEmbedder:
             f"[FoundryEmbedder] Initialized: endpoint={self.endpoint}, deployment={self.deployment}"
         )
 
-    def embed_chunks(self, chunks: list[dict], batch_size: int = 16) -> list[dict]:
-        """Generate embeddings for chunks. Batches up to 16 texts per API call.
+    def embed_chunks(
+        self,
+        chunks: list[dict],
+        batch_size: int = int(os.environ.get("EMBEDDING_BATCH_SIZE", "16")),
+    ) -> list[dict]:
+        """Generate embeddings for chunks. Batch size configurable via EMBEDDING_BATCH_SIZE env var.
 
         Adds 'content_vector' field to each chunk dict.
         """

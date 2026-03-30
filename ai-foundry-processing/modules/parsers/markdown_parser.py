@@ -151,11 +151,11 @@ def _walk_ast(tokens: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
             level = token.get("attrs", {}).get("level", 1)
             text = _extract_text(token.get("children", []))
 
-            # Build hierarchy
+            # Build hierarchy — clear deeper levels when a higher-level header appears
             hierarchy[level] = text
-            for l in [k for k in hierarchy if k > level]:
-                del hierarchy[l]
-            context_path = " > ".join(hierarchy[l] for l in sorted(hierarchy))
+            for old_level in [k for k in hierarchy if k > level]:
+                del hierarchy[old_level]
+            context_path = " > ".join(hierarchy[lvl] for lvl in sorted(hierarchy))
 
             headers.append({"level": level, "text": text, "context_path": context_path})
             current_prefix = f"Section: {context_path}\n\n"

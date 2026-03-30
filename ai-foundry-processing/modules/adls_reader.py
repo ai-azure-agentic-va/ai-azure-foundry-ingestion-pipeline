@@ -53,13 +53,22 @@ class AdlsReader:
         return data
 
     def read_metadata_sidecar(self, container: str, blob_path: str) -> dict:
-        """Read the .metadata.json sidecar for a document."""
+        """Read the .metadata.json sidecar for a document.
+
+        Returns empty dict if sidecar doesn't exist (normal — not all docs have one).
+        Logs a warning on unexpected errors (auth, network) instead of silently swallowing.
+        """
+        from azure.core.exceptions import ResourceNotFoundError
+
         metadata_path = f"{blob_path}.metadata.json"
         try:
             data = self.read_blob(container, metadata_path)
             return json.loads(data)
+        except ResourceNotFoundError:
+            logger.debug(f"[AdlsReader] No metadata sidecar for {blob_path}")
+            return {}
         except Exception as e:
-            logger.debug(f"[AdlsReader] No metadata sidecar for {blob_path}: {e}")
+            logger.warning(f"[AdlsReader] Error reading metadata sidecar for {blob_path}: {e}")
             return {}
 
     def move_to_failed(self, blob_path: str, error_message: str):
@@ -103,11 +112,19 @@ class AdlsReader:
         logger.debug(f"[AdlsReader] Saved state for {source_key}")
 
     def load_state(self, source_key: str) -> dict:
-        """Load processing state/watermark for a source."""
+        """Load processing state/watermark for a source.
+
+        Returns empty dict if no prior state exists.
+        """
+        from azure.core.exceptions import ResourceNotFoundError
+
         try:
             data = self.read_blob(self.container_state, f"{source_key}/watermark.json")
             return json.loads(data)
-        except Exception:
+        except ResourceNotFoundError:
+            return {}
+        except Exception as e:
+            logger.warning(f"[AdlsReader] Error loading state for {source_key}: {e}")
             return {}
 
     def list_blobs(self, container: str, prefix: str = "") -> list[str]:

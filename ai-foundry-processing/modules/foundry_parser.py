@@ -63,7 +63,7 @@ class FoundryParser:
             f"analyzer={self.analyzer_id}"
         )
 
-    def _get_client(self):
+    def _get_client(self) -> "ContentUnderstandingClient":
         """Lazy-load Content Understanding client."""
         if self._client is None:
             from azure.ai.contentunderstanding import ContentUnderstandingClient
@@ -83,7 +83,7 @@ class FoundryParser:
             logger.info("[FoundryParser] ContentUnderstandingClient initialized")
         return self._client
 
-    def parse(self, file_bytes: bytes, file_name: str = "document"):
+    def parse(self, file_bytes: bytes, file_name: str = "document") -> "ParseResult":
         """Parse document using Content Understanding.
 
         Text-based formats (.md, .txt, .csv, .json, .xml) are routed directly

@@ -5,17 +5,26 @@ Used when DOC_PROCESSING=AI_FOUNDRY_SERVICES."""
 
 import logging
 import os
+import threading
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded client
+# Thread-safe lazy-loaded client — safe for concurrent Azure Function invocations
 _text_client = None
+_client_lock = threading.Lock()
 
 
 def _get_text_client():
-    """Lazy-load Azure AI Text Analytics client."""
+    """Lazy-load Azure AI Text Analytics client (thread-safe singleton)."""
     global _text_client
-    if _text_client is None:
+    if _text_client is not None:
+        return _text_client
+
+    with _client_lock:
+        # Double-check after acquiring lock
+        if _text_client is not None:
+            return _text_client
+
         from azure.ai.textanalytics import TextAnalyticsClient
         from azure.identity import DefaultAzureCredential
         from azure.core.credentials import AzureKeyCredential
@@ -64,8 +73,9 @@ _CATEGORY_LABELS = {
 }
 
 # Domain-specific terms that should never be redacted even if flagged by the model.
-# Case-insensitive matching.
-_DOMAIN_ALLOWLIST = {
+# Case-insensitive matching. Configurable via PII_DOMAIN_ALLOWLIST env var
+# (comma-separated). Falls back to built-in defaults if not set.
+_DEFAULT_ALLOWLIST = {
     "merchant",
     "customer",
     "member",
@@ -83,6 +93,13 @@ _DOMAIN_ALLOWLIST = {
     "mastercard",
     "american express",
 }
+
+_env_allowlist = os.environ.get("PII_DOMAIN_ALLOWLIST", "")
+_DOMAIN_ALLOWLIST = (
+    {term.strip().lower() for term in _env_allowlist.split(",") if term.strip()}
+    if _env_allowlist
+    else _DEFAULT_ALLOWLIST
+)
 
 
 class FoundryPiiScanner:
