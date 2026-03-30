@@ -102,7 +102,7 @@ class FoundryDocPipeline:
             ext = os.path.splitext(file_name)[1].lower()
             # Merge parser metadata (sections, headers, tables, etc.) so chunkers
             # can use structured data from any parser, not just markdown
-            chunk_metadata = {**metadata, **parse_result.metadata}
+            chunk_metadata = {**metadata, **parse_result.metadata, "pages": parse_result.pages}
             chunks = self.chunker_factory.chunk(
                 parse_result.full_text, chunk_metadata, ext
             )
