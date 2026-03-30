@@ -203,21 +203,22 @@ class SearchPusher:
         )
 
     def ensure_index_exists(self):
-        """Create the search index if it does not already exist."""
-        from azure.core.exceptions import ResourceNotFoundError
+        """Create the search index if it does not already exist.
 
+        Uses create_or_update_index for idempotent operation — safe to call
+        repeatedly without checking existence first.
+        """
         try:
-            self._index_client.get_index(self.index_name)
-            logger.info(f"[SearchPusher] Index '{self.index_name}' already exists")
-        except ResourceNotFoundError:
-            logger.info(
-                f"[SearchPusher] Index '{self.index_name}' not found — creating..."
-            )
             index_schema = _build_index_schema(self.index_name)
-            self._index_client.create_index(index_schema)
+            self._index_client.create_or_update_index(index_schema)
             logger.info(
-                f"[SearchPusher] Index '{self.index_name}' created successfully"
+                f"[SearchPusher] Index '{self.index_name}' ensured (create_or_update)"
             )
+        except Exception as e:
+            logger.error(
+                f"[SearchPusher] Failed to ensure index '{self.index_name}': {e}"
+            )
+            raise
 
     def push(self, chunks: list[dict], batch_size: int = 100) -> dict:
         """Push chunks to AI Search using merge_or_upload for idempotent upserts.
