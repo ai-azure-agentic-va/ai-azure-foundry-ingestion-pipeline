@@ -1,5 +1,5 @@
 """Foundry LLM embedding generator - the ONLY external AI service call in the pipeline.
-Uses text-embedding-3-small via Azure OpenAI (Foundry) endpoint."""
+Uses text-embedding-3-large via Azure OpenAI (Foundry) endpoint."""
 
 import logging
 import os
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class FoundryEmbedder:
-    """Generate embeddings via Foundry LLM (text-embedding-3-small).
+    """Generate embeddings via Foundry LLM (text-embedding-3-large).
     This is the ONLY external AI call in the entire ingestion pipeline."""
 
     def __init__(
@@ -20,12 +20,16 @@ class FoundryEmbedder:
         endpoint: str | None = None,
         api_key: str | None = None,
         deployment: str | None = None,
+        dimensions: int | None = None,
         api_version: str | None = None,
     ):
         self.endpoint = endpoint or os.environ.get("FOUNDRY_ENDPOINT")
         self.api_key = api_key or os.environ.get("FOUNDRY_API_KEY")
         self.deployment = deployment or os.environ.get(
-            "FOUNDRY_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"
+            "FOUNDRY_EMBEDDING_DEPLOYMENT", "text-embedding-3-large"
+        )
+        self.dimensions = dimensions or int(
+            os.environ.get("FOUNDRY_EMBEDDING_DIMENSIONS", "3072")
         )
         self.api_version = api_version or os.environ.get(
             "FOUNDRY_API_VERSION", "2024-06-01"
@@ -95,6 +99,7 @@ class FoundryEmbedder:
                 return self.client.embeddings.create(
                     input=texts,
                     model=self.deployment,
+                    dimensions=self.dimensions,
                 )
             except RateLimitError:
                 wait = (2**attempt) + random.uniform(0, 1)

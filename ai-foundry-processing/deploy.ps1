@@ -96,7 +96,7 @@ Write-Host ""
 # ---------------------------------------------------------------------------
 # Step 1: Create Function App + Storage
 # ---------------------------------------------------------------------------
-Write-Host "[Step 1/5] Creating Function App: $FuncApp"
+Write-Host "[Step 1/6] Creating Function App: $FuncApp"
 
 Write-Host "  -> Creating storage account: $FuncStorage"
 az storage account create `
@@ -132,7 +132,7 @@ Write-Host "  -> $FuncApp created."
 # ---------------------------------------------------------------------------
 # Step 2: Enable Managed Identity + RBAC
 # ---------------------------------------------------------------------------
-Write-Host "[Step 2/5] Enabling Managed Identity and assigning RBAC"
+Write-Host "[Step 2/6] Enabling Managed Identity and assigning RBAC"
 
 $PrincipalId = az functionapp identity assign `
     --name $FuncApp `
@@ -162,9 +162,40 @@ foreach ($r in $roles) {
 Write-Host "  -> RBAC assignments complete."
 
 # ---------------------------------------------------------------------------
-# Step 3: Configure App Settings (from .env, excluding DEPLOY_*)
+# Step 3: Ensure Foundry Model Deployments Exist
 # ---------------------------------------------------------------------------
-Write-Host "[Step 3/5] Configuring app settings from .env"
+Write-Host "[Step 3/6] Ensuring required model deployments in Foundry"
+
+$EmbeddingDeployment = Get-Val "FOUNDRY_EMBEDDING_DEPLOYMENT" "FOUNDRY_EMBEDDING_DEPLOYMENT" "text-embedding-3-large"
+$EmbeddingModel      = Get-Val "FOUNDRY_EMBEDDING_MODEL"      "FOUNDRY_EMBEDDING_MODEL"      "text-embedding-3-large"
+
+# Check if embedding model deployment exists; create if not
+$existingDeployment = az cognitiveservices account deployment list `
+    --name $FoundryAccount `
+    --resource-group $FoundryRg `
+    --query "[?name=='$EmbeddingDeployment'].name" -o tsv 2>$null
+
+if ([string]::IsNullOrWhiteSpace($existingDeployment)) {
+    Write-Host "  -> Deploying model: $EmbeddingDeployment ($EmbeddingModel)"
+    az cognitiveservices account deployment create `
+        --name $FoundryAccount `
+        --resource-group $FoundryRg `
+        --deployment-name $EmbeddingDeployment `
+        --model-name $EmbeddingModel `
+        --model-version "1" `
+        --model-format OpenAI `
+        --sku-capacity 1 `
+        --sku-name Standard `
+        -o none
+    Write-Host "  -> $EmbeddingDeployment deployed."
+} else {
+    Write-Host "  -> $EmbeddingDeployment already exists."
+}
+
+# ---------------------------------------------------------------------------
+# Step 4: Configure App Settings (from .env, excluding DEPLOY_*)
+# ---------------------------------------------------------------------------
+Write-Host "[Step 4/6] Configuring app settings from .env"
 
 $appSettings = @()
 Get-Content $EnvFile | ForEach-Object {
@@ -204,9 +235,9 @@ az functionapp config appsettings set `
 Write-Host "  -> App settings configured from $EnvFile (DEPLOY_* excluded)"
 
 # ---------------------------------------------------------------------------
-# Step 4: Deploy Function App Code
+# Step 5: Deploy Function App Code
 # ---------------------------------------------------------------------------
-Write-Host "[Step 4/5] Deploying function code"
+Write-Host "[Step 5/6] Deploying function code"
 
 $funcCmd = Get-Command func -ErrorAction SilentlyContinue
 if ($funcCmd) {
@@ -222,9 +253,9 @@ if ($funcCmd) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 5: Verify + Restart
+# Step 6: Verify + Restart
 # ---------------------------------------------------------------------------
-Write-Host "[Step 5/5] Verifying deployment"
+Write-Host "[Step 6/6] Verifying deployment"
 
 $state = az functionapp show --name $FuncApp --resource-group $RgName --query "state" -o tsv 2>$null
 if (-not $state) { $state = "NOT FOUND" }

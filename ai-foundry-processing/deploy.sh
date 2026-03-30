@@ -97,7 +97,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Step 1: Create Function App + Storage
 # ---------------------------------------------------------------------------
-echo "[Step 1/5] Creating Function App: $FUNC_FOUNDRY_APP"
+echo "[Step 1/6] Creating Function App: $FUNC_FOUNDRY_APP"
 
 echo "  -> Creating storage account: $FUNC_FOUNDRY_STORAGE"
 az storage account create \
@@ -134,7 +134,7 @@ echo "  -> $FUNC_FOUNDRY_APP created."
 # ---------------------------------------------------------------------------
 # Step 2: Enable Managed Identity + RBAC
 # ---------------------------------------------------------------------------
-echo "[Step 2/5] Enabling Managed Identity and assigning RBAC"
+echo "[Step 2/6] Enabling Managed Identity and assigning RBAC"
 
 FOUNDRY_PRINCIPAL_ID=$(az functionapp identity assign \
   --name "$FUNC_FOUNDRY_APP" \
@@ -178,9 +178,40 @@ az role assignment create \
 echo "  -> RBAC assignments complete."
 
 # ---------------------------------------------------------------------------
-# Step 3: Configure App Settings (from .env, excluding DEPLOY_* variables)
+# Step 3: Ensure Foundry Model Deployments Exist
 # ---------------------------------------------------------------------------
-echo "[Step 3/5] Configuring app settings from .env"
+echo "[Step 3/6] Ensuring required model deployments in Foundry"
+
+EMBEDDING_DEPLOYMENT="${FOUNDRY_EMBEDDING_DEPLOYMENT:-text-embedding-3-large}"
+EMBEDDING_MODEL="${FOUNDRY_EMBEDDING_MODEL:-text-embedding-3-large}"
+
+# Check if embedding model deployment exists; create if not
+EXISTING_DEPLOYMENT=$(az cognitiveservices account deployment list \
+  --name "$FOUNDRY_ACCOUNT" \
+  --resource-group "$FOUNDRY_RG" \
+  --query "[?name=='$EMBEDDING_DEPLOYMENT'].name" -o tsv 2>/dev/null || echo "")
+
+if [ -z "$EXISTING_DEPLOYMENT" ]; then
+  echo "  -> Deploying model: $EMBEDDING_DEPLOYMENT ($EMBEDDING_MODEL)"
+  az cognitiveservices account deployment create \
+    --name "$FOUNDRY_ACCOUNT" \
+    --resource-group "$FOUNDRY_RG" \
+    --deployment-name "$EMBEDDING_DEPLOYMENT" \
+    --model-name "$EMBEDDING_MODEL" \
+    --model-version "1" \
+    --model-format OpenAI \
+    --sku-capacity 1 \
+    --sku-name Standard \
+    -o none
+  echo "  -> $EMBEDDING_DEPLOYMENT deployed."
+else
+  echo "  -> $EMBEDDING_DEPLOYMENT already exists."
+fi
+
+# ---------------------------------------------------------------------------
+# Step 4: Configure App Settings (from .env, excluding DEPLOY_* variables)
+# ---------------------------------------------------------------------------
+echo "[Step 4/6] Configuring app settings from .env"
 
 # Read app settings from .env — filter out DEPLOY_* (deployment-only, not app settings)
 declare -a ENV_SETTINGS=()
@@ -228,9 +259,9 @@ az functionapp config appsettings set \
 echo "  -> App settings configured from $ENV_FILE (DEPLOY_* excluded)"
 
 # ---------------------------------------------------------------------------
-# Step 4: Deploy Function App Code
+# Step 5: Deploy Function App Code
 # ---------------------------------------------------------------------------
-echo "[Step 4/5] Deploying function code"
+echo "[Step 5/6] Deploying function code"
 
 if command -v func &> /dev/null; then
   cd "$SCRIPT_DIR"
@@ -244,9 +275,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: Verify + Restart
+# Step 6: Verify + Restart
 # ---------------------------------------------------------------------------
-echo "[Step 5/5] Verifying deployment"
+echo "[Step 6/6] Verifying deployment"
 
 FUNC_FOUNDRY_STATE=$(az functionapp show --name "$FUNC_FOUNDRY_APP" --resource-group "$RG_NAME" --query "state" -o tsv 2>/dev/null || echo "NOT FOUND")
 echo "  -> Function App state: $FUNC_FOUNDRY_STATE"

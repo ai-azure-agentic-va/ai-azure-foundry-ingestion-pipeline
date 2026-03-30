@@ -27,16 +27,18 @@ from azure.identity import DefaultAzureCredential
 
 logger = logging.getLogger(__name__)
 
-# Vector dimensions for text-embedding-3-small
-VECTOR_DIMENSIONS = 1536
+# Vector dimensions — must match the embedding model output
+# text-embedding-3-large: 3072 (default), text-embedding-3-small: 1536
+VECTOR_DIMENSIONS = int(os.environ.get("FOUNDRY_EMBEDDING_DIMENSIONS", "3072"))
 
 # Integrated vectorizer config — auto-vectorizes raw text queries at search time
-AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+# Uses FOUNDRY_ENDPOINT (same endpoint as embedder) for the vectorizer
+FOUNDRY_VECTORIZER_ENDPOINT = os.environ.get("FOUNDRY_ENDPOINT", "")
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get(
-    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"
+    "FOUNDRY_EMBEDDING_DEPLOYMENT", "text-embedding-3-large"
 )
 AZURE_OPENAI_EMBEDDING_MODEL = os.environ.get(
-    "AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+    "FOUNDRY_EMBEDDING_MODEL", "text-embedding-3-large"
 )
 
 
@@ -57,7 +59,7 @@ def _build_index_schema(index_name: str) -> SearchIndex:
             searchable=True,
             hidden=False,
             vector_search_dimensions=VECTOR_DIMENSIONS,
-            vector_search_profile_name="default-vector-profile",
+            vector_search_profile_name="foundry-vector-profile",
         ),
         SearchableField(
             name="document_title",
@@ -114,11 +116,11 @@ def _build_index_schema(index_name: str) -> SearchIndex:
     # Integrated vectorizer — without this, Azure AI Search cannot auto-vectorize
     # raw text queries and silently falls back to BM25 keyword search
     vectorizer = None
-    if AZURE_OPENAI_ENDPOINT:
+    if FOUNDRY_VECTORIZER_ENDPOINT:
         vectorizer = AzureOpenAIVectorizer(
-            vectorizer_name="default-openai-vectorizer",
+            vectorizer_name="foundry-openai-vectorizer",
             parameters=AzureOpenAIVectorizerParameters(
-                resource_url=AZURE_OPENAI_ENDPOINT,
+                resource_url=FOUNDRY_VECTORIZER_ENDPOINT,
                 deployment_name=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
                 model_name=AZURE_OPENAI_EMBEDDING_MODEL,
             ),
@@ -138,9 +140,9 @@ def _build_index_schema(index_name: str) -> SearchIndex:
         ],
         profiles=[
             VectorSearchProfile(
-                name="default-vector-profile",
+                name="foundry-vector-profile",
                 algorithm_configuration_name="default-hnsw",
-                vectorizer_name="default-openai-vectorizer" if vectorizer else None,
+                vectorizer_name="foundry-openai-vectorizer" if vectorizer else None,
             )
         ],
         vectorizers=[vectorizer] if vectorizer else [],
@@ -149,8 +151,12 @@ def _build_index_schema(index_name: str) -> SearchIndex:
     semantic_config = SemanticConfiguration(
         name="custom-kb-semantic-config",
         prioritized_fields=SemanticPrioritizedFields(
-            content_fields=[SemanticField(field_name="chunk_content")],
             title_field=SemanticField(field_name="document_title"),
+            content_fields=[SemanticField(field_name="chunk_content")],
+            keyword_fields=[
+                SemanticField(field_name="source_type"),
+                SemanticField(field_name="file_name"),
+            ],
         ),
     )
     semantic_search = SemanticSearch(configurations=[semantic_config])
