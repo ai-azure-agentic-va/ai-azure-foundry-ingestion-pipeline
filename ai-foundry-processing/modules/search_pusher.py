@@ -77,7 +77,7 @@ def _build_index_schema(index_name: str) -> SearchIndex:
             filterable=True,
             facetable=True,
         ),
-        SimpleField(name="file_name", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="file_name", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SimpleField(
             name="chunk_index",
             type=SearchFieldDataType.Int32,

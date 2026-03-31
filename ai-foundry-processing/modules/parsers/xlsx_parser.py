@@ -12,7 +12,7 @@ class XlsxParser(BaseParser):
 
     @property
     def supported_extensions(self) -> list[str]:
-        return [".xlsx", ".xls"]
+        return [".xlsx", ".xls", ".xlsm"]
 
     def parse(self, file_bytes: bytes) -> ParseResult:
         logger.info(f"[XlsxParser] Parsing XLSX ({len(file_bytes)} bytes)")

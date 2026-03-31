@@ -177,9 +177,15 @@ class FoundryDocPipeline:
 
 
 def _infer_source_type(blob_path: str) -> str:
-    """Infer source type from blob path prefix."""
-    if blob_path.startswith("sharepoint/") or "/sharepoint/" in blob_path:
+    """Infer source type from blob path prefix.
+
+    Known prefixes:
+      - SharePoint/...  → "sharepoint"
+      - NFCU-VA-WIKI/... or wiki/... → "wiki"
+    """
+    path_lower = blob_path.lower()
+    if "sharepoint" in path_lower:
         return "sharepoint"
-    elif blob_path.startswith("wiki/") or "/wiki/" in blob_path:
+    if "wiki" in path_lower or "nfcu-va-wiki" in path_lower:
         return "wiki"
     return "unknown"

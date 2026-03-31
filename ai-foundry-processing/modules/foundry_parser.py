@@ -25,6 +25,9 @@ _DIRECT_PARSE_EXTENSIONS = {
     ".csv",  # CSV (tabular text)
     ".json",  # JSON
     ".xml",  # XML
+    ".xlsx",
+    ".xls",
+    ".xlsm",  # Excel — openpyxl handles natively, skip CU
 }
 
 
