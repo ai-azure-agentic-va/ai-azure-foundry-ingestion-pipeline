@@ -40,6 +40,16 @@ class AdlsReader:
         logger.debug(f"[AdlsReader] Read {len(data)} bytes from {container}/{blob_path}")
         return data
 
+    def read_blob_metadata(self, container: str, blob_path: str) -> dict:
+        """Read the blob's native Azure metadata properties (key-value pairs set on the blob itself)."""
+        try:
+            blob_client = self.blob_service.get_blob_client(container=container, blob=blob_path)
+            props = blob_client.get_blob_properties()
+            return dict(props.metadata) if props.metadata else {}
+        except Exception as e:
+            logger.debug(f"[AdlsReader] Could not read blob metadata for {blob_path}: {e}")
+            return {}
+
     def read_metadata_sidecar(self, container: str, blob_path: str) -> dict:
         """Read the .metadata.json sidecar for a document."""
         metadata_path = f"{blob_path}.metadata.json"

@@ -68,12 +68,18 @@ class FoundryDocPipeline:
             logger.error(f"[FoundryDocPipeline] Failed to read blob: {e}")
             return {"status": "error", "stage": "read", "error": str(e)}
 
-        # Always read metadata sidecar — sidecar values (e.g. SharePoint source_url) override trigger defaults
+        # Read metadata from blob properties (set by ADF sync) and sidecar files.
+        # Blob metadata has source_url, source_type, etc. from SharePoint.
+        # Both override trigger-provided defaults (blob metadata > sidecar > trigger).
         if metadata is None:
             metadata = {}
+        blob_meta = self.adls.read_blob_metadata(container, blob_path)
+        for key, value in blob_meta.items():
+            if value:
+                metadata[key] = value
         sidecar = self.adls.read_metadata_sidecar(container, blob_path)
         for key, value in sidecar.items():
-            if value:  # Sidecar values take precedence over trigger-provided defaults
+            if value:  # Sidecar values take precedence
                 metadata[key] = value
 
         metadata.setdefault("file_name", file_name)

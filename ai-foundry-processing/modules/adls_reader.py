@@ -52,6 +52,28 @@ class AdlsReader:
         )
         return data
 
+    def read_blob_metadata(self, container: str, blob_path: str) -> dict:
+        """Read blob-level metadata properties (key-value pairs set by ADF sync).
+
+        These are the metadata properties visible in Azure Portal under a blob's
+        'Metadata' section — NOT the .metadata.json sidecar file.
+        Returns empty dict on any error.
+        """
+        try:
+            blob_client = self.blob_service.get_blob_client(
+                container=container, blob=blob_path
+            )
+            props = blob_client.get_blob_properties()
+            metadata = dict(props.metadata) if props.metadata else {}
+            if metadata:
+                logger.info(
+                    f"[AdlsReader] Blob metadata for {blob_path}: {list(metadata.keys())}"
+                )
+            return metadata
+        except Exception as e:
+            logger.warning(f"[AdlsReader] Error reading blob metadata for {blob_path}: {e}")
+            return {}
+
     def read_metadata_sidecar(self, container: str, blob_path: str) -> dict:
         """Read the .metadata.json sidecar for a document.
 

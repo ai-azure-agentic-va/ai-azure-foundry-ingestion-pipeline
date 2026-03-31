@@ -61,12 +61,16 @@ class CustomDocPipeline:
             logger.error(f"[CustomDocPipeline] Failed to read blob: {e}")
             return {"status": "error", "stage": "read", "error": str(e)}
 
-        # Always read metadata sidecar — sidecar values (e.g. SharePoint source_url) override trigger defaults
+        # Metadata priority: blob native metadata > sidecar .metadata.json > trigger defaults
         if metadata is None:
             metadata = {}
         sidecar = self.adls.read_metadata_sidecar(container, blob_path)
         for key, value in sidecar.items():
             if value:  # Sidecar values take precedence over trigger-provided defaults
+                metadata[key] = value
+        blob_meta = self.adls.read_blob_metadata(container, blob_path)
+        for key, value in blob_meta.items():
+            if value:  # Blob native metadata takes highest precedence
                 metadata[key] = value
 
         metadata.setdefault("file_name", file_name)

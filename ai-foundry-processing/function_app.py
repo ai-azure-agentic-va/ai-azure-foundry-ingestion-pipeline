@@ -3,12 +3,14 @@
 AI Foundry Services pipeline: Content Understanding, Azure Language PII.
 Active when DOC_PROCESSING=AI_FOUNDRY_SERVICES (or this Function App is deployed).
 
-Triggers (5 total, all configurable via env vars):
+Triggers (4 total, all configurable via env vars):
   1. process_new_document:       Event Grid (BlobCreated on ADLS) - direct mode
   2. process_queue_document:     Queue trigger (Event Grid → Queue → Function) - queue mode
   3. process_blob_document:      Blob trigger (direct blob storage polling) - blob mode
   4. health_check:               HTTP GET - health/readiness
-  5. ensure_index:               HTTP POST - create search index if missing
+
+On cold start the app automatically ensures the AI Search index exists
+(create_or_update via SearchPusher) — no manual POST required.
 
 Trigger mode is controlled by TRIGGER_MODE env var:
   - EVENTGRID_DIRECT:  Event Grid fires directly to process_new_document (queue/blob disabled)
@@ -33,6 +35,16 @@ app = func.FunctionApp()
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")))
+
+# --- Auto-create search index on cold start ---
+try:
+    from modules.search_pusher import SearchPusher
+
+    _search_pusher = SearchPusher()  # calls ensure_index_exists() in __init__
+    logger.info(f"[Startup] Search index ensured: {_search_pusher.index_name}")
+except Exception as e:
+    logger.error(f"[Startup] Failed to ensure search index: {e}")
+    _search_pusher = None
 
 # Lazy-loaded pipeline with thread-safe double-checked locking
 _pipeline = None
@@ -259,40 +271,3 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
         status_code=200,
         mimetype="application/json",
     )
-
-
-# ---------------------------------------------------------------------------
-# 5. HTTP Trigger: ensure search index exists (create if missing)
-#    POST /api/ensure-index — call after deploying to a new environment
-# ---------------------------------------------------------------------------
-@app.function_name("ensure_index")
-@app.route(route="ensure-index", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
-def ensure_index(req: func.HttpRequest) -> func.HttpResponse:
-    """Create the AI Search index if it does not already exist.
-
-    Uses the same schema defined in SearchPusher so the index is always
-    consistent with what the ingestion pipeline expects.
-    """
-    try:
-        from modules.search_pusher import SearchPusher
-
-        pusher = SearchPusher()
-        return func.HttpResponse(
-            json.dumps(
-                {
-                    "status": "ok",
-                    "index_name": pusher.index_name,
-                    "endpoint": pusher.endpoint,
-                    "message": f"Index '{pusher.index_name}' exists (created if missing)",
-                }
-            ),
-            status_code=200,
-            mimetype="application/json",
-        )
-    except Exception as e:
-        logger.error(f"[EnsureIndex] Failed to ensure index: {e}")
-        return func.HttpResponse(
-            json.dumps({"status": "error", "error": str(e)}),
-            status_code=500,
-            mimetype="application/json",
-        )
