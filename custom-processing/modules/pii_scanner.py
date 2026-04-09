@@ -2,7 +2,6 @@
 No Azure Text Analytics. No Azure AI services. All local."""
 
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 

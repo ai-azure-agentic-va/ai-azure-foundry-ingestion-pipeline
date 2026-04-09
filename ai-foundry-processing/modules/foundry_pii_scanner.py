@@ -159,10 +159,7 @@ class FoundryPiiScanner:
             if not entities:
                 return text, False, []
 
-            # Use the SDK's built-in redacted text
-            redacted_text = doc_result.redacted_text
-
-            # Also apply our custom labels for consistency with Presidio output
+            # Apply our custom labels for consistency with Presidio output
             redacted_text = self._apply_custom_labels(text, entities)
 
             detected = [

@@ -5,7 +5,6 @@ import base64
 import logging
 from datetime import datetime, timezone
 
-import tiktoken
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     MarkdownHeaderTextSplitter,
@@ -18,8 +17,6 @@ class TokenChunker:
     """Split text into token-sized chunks for standard documents (PDF, DOCX, etc.)."""
 
     def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200, encoding: str = "cl100k_base"):
-        self.encoding_name = encoding
-        self.enc = tiktoken.get_encoding(encoding)
         self.splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
             encoding_name=encoding,
             chunk_size=chunk_size,

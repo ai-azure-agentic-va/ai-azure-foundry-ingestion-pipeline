@@ -61,8 +61,3 @@ class ParserFactory:
             f"[ParserFactory] Using {parser.__class__.__name__} for '{file_name}'"
         )
         return parser.parse(file_bytes)
-
-    @staticmethod
-    def is_supported(file_name: str) -> bool:
-        ext = os.path.splitext(file_name)[1].lower()
-        return ext in _EXTENSION_MAP

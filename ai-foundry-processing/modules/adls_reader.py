@@ -1,5 +1,5 @@
 """ADLS Gen2 / Blob Storage reader using azure-storage-blob SDK.
-Reads documents from ADLS and manages failed/state containers."""
+Reads documents from ADLS and manages failed containers."""
 
 import json
 import logging
@@ -13,14 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 class AdlsReader:
-    """Read files from ADLS Gen2 and manage processing state."""
+    """Read files from ADLS Gen2 and manage failed documents."""
 
     def __init__(
         self,
         account_name: str | None = None,
         container_raw: str | None = None,
         container_failed: str | None = None,
-        container_state: str | None = None,
     ):
         self.account_name = account_name or os.environ.get("ADLS_ACCOUNT_NAME")
         self.container_raw = container_raw or os.environ.get(
@@ -28,9 +27,6 @@ class AdlsReader:
         )
         self.container_failed = container_failed or os.environ.get(
             "ADLS_CONTAINER_FAILED", "raw-documents-failed"
-        )
-        self.container_state = container_state or os.environ.get(
-            "ADLS_CONTAINER_STATE", "processing-state"
         )
 
         account_url = f"https://{self.account_name}.blob.core.windows.net"
@@ -124,33 +120,3 @@ class AdlsReader:
         except Exception as e:
             logger.error(f"[AdlsReader] Failed to move {blob_path} to failed: {e}")
 
-    def save_state(self, source_key: str, state: dict):
-        """Save processing state/watermark for a source."""
-        blob_client = self.blob_service.get_blob_client(
-            container=self.container_state,
-            blob=f"{source_key}/watermark.json",
-        )
-        blob_client.upload_blob(json.dumps(state), overwrite=True)
-        logger.debug(f"[AdlsReader] Saved state for {source_key}")
-
-    def load_state(self, source_key: str) -> dict:
-        """Load processing state/watermark for a source.
-
-        Returns empty dict if no prior state exists.
-        """
-        from azure.core.exceptions import ResourceNotFoundError
-
-        try:
-            data = self.read_blob(self.container_state, f"{source_key}/watermark.json")
-            return json.loads(data)
-        except ResourceNotFoundError:
-            return {}
-        except Exception as e:
-            logger.warning(f"[AdlsReader] Error loading state for {source_key}: {e}")
-            return {}
-
-    def list_blobs(self, container: str, prefix: str = "") -> list[str]:
-        """List blob paths in a container with optional prefix."""
-        container_client = self.blob_service.get_container_client(container)
-        blobs = container_client.list_blobs(name_starts_with=prefix)
-        return [b.name for b in blobs if not b.name.endswith(".metadata.json")]

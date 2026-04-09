@@ -31,7 +31,6 @@ class TokenChunker:
         chunk_overlap: int = 200,
         encoding: str = "cl100k_base",
     ):
-        self.encoding_name = encoding
         self.enc = tiktoken.get_encoding(encoding)
         self.splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
             encoding_name=encoding,
