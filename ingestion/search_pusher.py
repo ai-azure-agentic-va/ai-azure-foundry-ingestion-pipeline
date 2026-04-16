@@ -52,6 +52,7 @@ def _build_index_schema(index_name: str) -> SearchIndex:
         SimpleField(name="source_url", type=SearchFieldDataType.String, filterable=True),
         SimpleField(name="source_type", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SimpleField(name="file_name", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SearchableField(name="breadcrumb", type=SearchFieldDataType.String, filterable=True, analyzer_name="en.microsoft"),
         SimpleField(name="chunk_index", type=SearchFieldDataType.Int32, filterable=True, sortable=True),
         SimpleField(name="total_chunks", type=SearchFieldDataType.Int32, filterable=True),
         SimpleField(name="page_number", type=SearchFieldDataType.Int32, filterable=True, sortable=True),
@@ -96,6 +97,7 @@ def _build_index_schema(index_name: str) -> SearchIndex:
             keyword_fields=[
                 SemanticField(field_name="source_type"),
                 SemanticField(field_name="file_name"),
+                SemanticField(field_name="breadcrumb"),
             ],
         ),
     )

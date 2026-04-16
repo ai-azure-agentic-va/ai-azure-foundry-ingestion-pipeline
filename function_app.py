@@ -163,8 +163,9 @@ def process_queue_document(msg: func.QueueMessage):
             logger.info(f"[Queue] Result: {json.dumps(result)}")
 
     except Exception as e:
-        logger.error(f"[Queue] Error processing queue message: {e}")
-        raise
+        logger.error(f"[Queue] Error processing queue message (fail-fast, no retry): {e}")
+        # Fail-fast: log and swallow — maxDequeueCount=1 prevents infinite retries.
+        # Failed messages go straight to poison queue for manual review.
 
 
 @app.function_name("process_blob_document")

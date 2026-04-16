@@ -243,6 +243,23 @@ def _make_chunk_id(file_path: str, chunk_index: int) -> str:
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
+def _make_breadcrumb(file_path: str) -> str:
+    """Build a human-readable breadcrumb from a blob path.
+
+    Example: 'wiki/Engineering/Platform/setup-guide.pdf'
+          → 'Engineering > Platform > setup-guide.pdf'
+    Strips known container prefixes (raw-documents, wiki, sharepoint).
+    """
+    if not file_path:
+        return ""
+    parts = file_path.replace("\\", "/").strip("/").split("/")
+    # Strip common container/prefix segments
+    skip_prefixes = {"raw-documents", "wiki", "sharepoint", "documents"}
+    while parts and parts[0].lower() in skip_prefixes:
+        parts.pop(0)
+    return " > ".join(parts) if parts else file_path
+
+
 def _build_chunk_dict(metadata: dict, index: int, chunk_content: str, total: int) -> dict:
     return {
         "id": _make_chunk_id(metadata.get("file_path", "unknown"), index),
@@ -257,4 +274,5 @@ def _build_chunk_dict(metadata: dict, index: int, chunk_content: str, total: int
         "last_modified": metadata.get("last_modified"),
         "ingested_at": datetime.now(timezone.utc).isoformat(),
         "pii_redacted": False,
+        "breadcrumb": _make_breadcrumb(metadata.get("file_path", "")),
     }
