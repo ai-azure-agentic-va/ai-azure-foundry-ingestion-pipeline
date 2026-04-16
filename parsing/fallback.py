@@ -37,16 +37,11 @@ class ParserFactory:
         parser = _EXTENSION_MAP.get(ext)
 
         if parser is None:
-            logger.warning(f"[ParserFactory] No parser for extension '{ext}', attempting text fallback")
-            try:
-                text = file_bytes.decode("utf-8", errors="replace")
-                return ParseResult(full_text=text, metadata={"format": "fallback"})
-            except Exception:
-                logger.error(f"[ParserFactory] Cannot parse file '{file_name}' with extension '{ext}'")
-                return ParseResult(
-                    full_text="",
-                    metadata={"format": "unsupported", "error": f"Unsupported extension: {ext}"},
-                )
+            logger.warning(f"[ParserFactory] No parser for extension '{ext}' — rejecting '{file_name}'")
+            return ParseResult(
+                full_text="",
+                metadata={"format": "unsupported", "error": f"No parser for extension: {ext}"},
+            )
 
         logger.info(f"[ParserFactory] Using {parser.__class__.__name__} for '{file_name}'")
         return parser.parse(file_bytes)

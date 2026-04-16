@@ -47,12 +47,16 @@ class Settings:
         self.SEARCH_INDEX_NAME: str = os.environ.get("SEARCH_INDEX_NAME", "nfcu-rag-index")
 
         # Chunking
-        self.CHUNK_SIZE_TOKENS: int = int(os.environ.get("CHUNK_SIZE_TOKENS", "1024"))
-        self.CHUNK_OVERLAP_TOKENS: int = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "200"))
+        self.CHUNK_SIZE_TOKENS: int = int(os.environ.get("CHUNK_SIZE_TOKENS", "1500"))
+        self.CHUNK_OVERLAP_TOKENS: int = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "75"))
         self.CHUNK_STRATEGY_MD: str = os.environ.get("CHUNK_STRATEGY_MD", "header_based")
         self.CHUNK_STRATEGY_XLSX: str = os.environ.get("CHUNK_STRATEGY_XLSX", "sheet_based")
         self.CHUNK_STRATEGY_PDF: str = os.environ.get("CHUNK_STRATEGY_PDF", "semantic")
         self.CHUNK_STRATEGY_DEFAULT: str = os.environ.get("CHUNK_STRATEGY_DEFAULT", "recursive")
+
+        # Document Intelligence (fallback for image OCR when CU fails)
+        # Uses Managed Identity (DefaultAzureCredential) — no API keys
+        self.DOC_INTELLIGENCE_ENDPOINT: str | None = os.environ.get("DOC_INTELLIGENCE_ENDPOINT")
 
         # Function App / Triggers
         self.LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "INFO")

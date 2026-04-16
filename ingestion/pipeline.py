@@ -62,6 +62,14 @@ class FoundryDocPipeline:
         metadata.setdefault("file_path", blob_path)
         metadata.setdefault("source_type", _infer_source_type(blob_path))
 
+        # Validate required metadata — source_type and source_url must exist
+        if not metadata.get("source_type"):
+            logger.warning(f"[FoundryDocPipeline] Missing source_type for {file_name} — skipping")
+            return {"status": "skipped", "reason": "missing_source_type"}
+        if not metadata.get("source_url"):
+            logger.warning(f"[FoundryDocPipeline] Missing source_url for {file_name} — skipping")
+            return {"status": "skipped", "reason": "missing_source_url"}
+
         # 2. Parse document
         try:
             parse_result = self.parser.parse(file_bytes, file_name)

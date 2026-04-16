@@ -6,11 +6,34 @@ Trigger mode controlled by TRIGGER_MODE env var: EVENTGRID_DIRECT, EVENTGRID_QUE
 
 import json
 import logging
+import os
 import threading
 
 import azure.functions as func
 
 from ingestion.config import settings as _cfg
+
+# Extension allow list — reject unsupported files before any processing.
+# This is the FIRST gate, independent of source system or parser.
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".xlsm",
+    ".pptx", ".ppt", ".csv", ".txt", ".md", ".markdown",
+    ".json", ".xml", ".png", ".jpg", ".jpeg", ".tiff", ".bmp",
+}
+
+
+
+def _is_allowed_extension(blob_path: str) -> bool:
+    """Check if file extension is in the allow list.
+
+    This is the SINGLE source of truth for ingest/reject decisions.
+    Extension determines parser capability — if we can't parse it, we don't ingest it.
+    """
+    ext = os.path.splitext(blob_path)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        logger.warning(f"[AllowList] Rejecting unsupported file: {blob_path} (ext: {ext or 'none'})")
+        return False
+    return True
 
 app = func.FunctionApp()
 
@@ -64,6 +87,15 @@ def _extract_blob_info(data: dict) -> tuple[str, str, str, int] | None:
 
     if content_length == 0:
         logger.debug(f"[Trigger] Skipping zero-byte file: {blob_path}")
+        return None
+
+    # Folder detection for Event Grid / Queue triggers
+    if blob_path.endswith("/"):
+        logger.info(f"[Trigger] Skipping folder marker: {blob_path}")
+        return None
+
+    # Extension allow list gate — single source of truth
+    if not _is_allowed_extension(blob_path):
         return None
 
     return container, blob_path, content_type, content_length
@@ -160,6 +192,10 @@ def process_blob_document(blob: func.InputStream):
 
     if content_length == 0:
         logger.debug(f"[BlobTrigger] Skipping zero-byte file: {blob_name}")
+        return
+
+    # Extension allow list gate — single source of truth
+    if not _is_allowed_extension(blob_name):
         return
 
     container = _cfg.ADLS_CONTAINER_RAW

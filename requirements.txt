@@ -6,6 +6,9 @@ azure-storage-blob>=12.19.0
 azure-storage-file-datalake>=12.14.0
 azure-identity>=1.19.0
 
+# Image preprocessing (downscale before CU's 10K x 10K limit)
+Pillow>=10.0.0
+
 # Custom Document Parsing (fallback parsers for .md files and error recovery)
 mistune>=3.1.0
 python-frontmatter>=1.1.0
