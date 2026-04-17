@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class PptxParser(BaseParser):
-    """Extract text, tables, and speaker notes from PowerPoint files."""
 
     @property
     def supported_extensions(self) -> list[str]:
@@ -47,9 +46,7 @@ class PptxParser(BaseParser):
                     "text": "\n".join(texts),
                 })
 
-        full_text = "\n\n".join(
-            f"Slide {s['page_number']}:\n{s['text']}" for s in slides
-        )
+        full_text = "\n\n".join(f"Slide {s['page_number']}:\n{s['text']}" for s in slides)
 
         logger.info(f"[PptxParser] Extracted {len(slides)} slides, {len(full_text)} chars")
         return ParseResult(

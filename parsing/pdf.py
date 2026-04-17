@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class PdfParser(BaseParser):
-    """Extract text and tables from PDFs using PyMuPDF."""
 
     @property
     def supported_extensions(self) -> list[str]:

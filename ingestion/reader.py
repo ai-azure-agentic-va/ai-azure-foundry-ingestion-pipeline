@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class AdlsReader:
-    """Read files from ADLS Gen2 and manage failed documents."""
 
     def __init__(
         self,
@@ -50,7 +49,6 @@ class AdlsReader:
         return data
 
     def read_blob_metadata(self, container: str, blob_path: str) -> dict:
-        """Read blob-level metadata and system properties (last_modified, content_type)."""
         try:
             blob_client = self.blob_service.get_blob_client(container=container, blob=blob_path)
             props = blob_client.get_blob_properties()
@@ -69,7 +67,6 @@ class AdlsReader:
             return {}
 
     def read_metadata_sidecar(self, container: str, blob_path: str) -> dict:
-        """Read the .metadata.json sidecar for a document."""
         from azure.core.exceptions import ResourceNotFoundError
 
         metadata_path = f"{blob_path}.metadata.json"
@@ -84,7 +81,6 @@ class AdlsReader:
             return {}
 
     def move_to_failed(self, blob_path: str, error_message: str):
-        """Copy a document to the failed container with error info."""
         try:
             source_client = self.blob_service.get_blob_client(
                 container=self.container_raw, blob=blob_path

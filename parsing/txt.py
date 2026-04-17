@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class TextParser(BaseParser):
-    """Parse plain text, CSV, and other text-based formats."""
 
     @property
     def supported_extensions(self) -> list[str]:

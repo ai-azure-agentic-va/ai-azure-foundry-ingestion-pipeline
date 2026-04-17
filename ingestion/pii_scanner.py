@@ -1,14 +1,8 @@
 """PII detection and redaction via Azure AI Language service.
 
-Azure AI Language constraints (as of 2024-06-01 API):
-  - Max 5 documents per API call (InvalidDocumentBatch if exceeded)
-  - Max 5,120 characters per document (InvalidDocument if exceeded)
-  - Rate limit: 429 responses under heavy load
-
-This module enforces both limits with a single constant each, batches all
-calls (including sub-chunks from long texts), retries transient failures
-with jitter to prevent thundering herd, and degrades gracefully per-chunk
-rather than per-document.
+Azure AI Language hard limits:
+  - Max 5 documents per API call
+  - Max 5,120 characters per document
 """
 
 import logging
@@ -18,26 +12,19 @@ import time
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Azure AI Language API hard limits — do NOT increase these.
-# Source: https://learn.microsoft.com/en-us/azure/ai-services/language-service/
-#         personally-identifiable-information/service-limits
-# ---------------------------------------------------------------------------
-API_MAX_DOCS_PER_BATCH = 5      # Max documents in a single recognize_pii_entities call
-API_MAX_CHARS_PER_DOC = 5120    # Max characters per document
-_CHUNK_TARGET_SIZE = 5000       # Leave headroom below API_MAX_CHARS_PER_DOC for word-boundary splits
+API_MAX_DOCS_PER_BATCH = 5
+API_MAX_CHARS_PER_DOC = 5120
+_CHUNK_TARGET_SIZE = 5000  # headroom below API_MAX_CHARS_PER_DOC for word-boundary splits
 
-# Retry settings — matches embedder's enterprise pattern
 _MAX_RETRIES = 6
-_RETRY_BASE_DELAY_S = 1.0      # Exponential backoff with jitter
-_RETRY_CEILING_S = 30.0         # Cap backoff at 30s
+_RETRY_BASE_DELAY_S = 1.0
+_RETRY_CEILING_S = 30.0
 
 _text_client = None
 _client_lock = threading.Lock()
 
 
 def _get_text_client():
-    """Lazy-load Azure AI Text Analytics client (thread-safe singleton)."""
     global _text_client
     if _text_client is not None:
         return _text_client
@@ -52,7 +39,6 @@ def _get_text_client():
         from .config import settings
 
         endpoint = settings.FOUNDRY_PII_ENDPOINT or settings.FOUNDRY_ENDPOINT
-
         if not endpoint:
             raise ValueError("FOUNDRY_ENDPOINT or FOUNDRY_PII_ENDPOINT is required for FoundryPiiScanner")
 
@@ -61,10 +47,6 @@ def _get_text_client():
     return _text_client
 
 
-# ---------------------------------------------------------------------------
-# PII categories to redact — intentionally narrow to avoid false positives
-# on common business terms (Person, Organization, DateTime excluded).
-# ---------------------------------------------------------------------------
 _CATEGORY_LABELS = {
     "USSocialSecurityNumber": "[SSN REDACTED]",
     "CreditCardNumber": "[CARD REDACTED]",
@@ -90,15 +72,12 @@ _DEFAULT_ALLOWLIST = set(
 
 
 def _is_transient_error(exc: Exception) -> bool:
-    """Return True if the exception looks like a retryable transient error."""
     msg = str(exc).lower()
-    # Tightened patterns to avoid matching non-transient errors like "bad connection string"
     for signal in ("429", "too many requests", "503", "service unavailable",
                    "connection reset", "connection refused", "connection timed out",
                    "timeout", "temporarily unavailable", "502", "504"):
         if signal in msg:
             return True
-    # Azure SDK HttpResponseError carries a status_code attribute
     status = getattr(exc, "status_code", None)
     if status in (429, 503, 502, 504):
         return True
@@ -106,20 +85,6 @@ def _is_transient_error(exc: Exception) -> bool:
 
 
 def _call_pii_api_with_retry(client, documents: list[str]) -> list:
-    """Call recognize_pii_entities with retry + exponential backoff + jitter.
-
-    Args:
-        client: TextAnalyticsClient instance
-        documents: List of text strings (must be <= API_MAX_DOCS_PER_BATCH,
-                   each <= API_MAX_CHARS_PER_DOC)
-
-    Returns:
-        List of document results from the API.
-
-    Raises:
-        Exception: After all retries exhausted.
-    """
-    # Production guard — never use assert (stripped by Python -O flag)
     if len(documents) > API_MAX_DOCS_PER_BATCH:
         raise ValueError(
             f"Bug: tried to send {len(documents)} docs, max is {API_MAX_DOCS_PER_BATCH}"
@@ -132,7 +97,6 @@ def _call_pii_api_with_retry(client, documents: list[str]) -> list:
         except Exception as exc:
             last_exc = exc
             if _is_transient_error(exc) and attempt < _MAX_RETRIES - 1:
-                # Full jitter backoff (matches embedder pattern)
                 base_delay = min(_RETRY_CEILING_S, _RETRY_BASE_DELAY_S * (2 ** attempt))
                 delay = random.uniform(0, base_delay)
                 logger.warning(
@@ -142,22 +106,15 @@ def _call_pii_api_with_retry(client, documents: list[str]) -> list:
                 time.sleep(delay)
             else:
                 raise
-    raise last_exc  # unreachable, but satisfies type checker
+    raise last_exc
 
 
 class FoundryPiiScanner:
-    """Scan text for PII and redact using Azure AI Language.
-
-    Public interface:
-        scan_and_redact(text) -> (redacted_text, pii_found, detected_entities)
-        scan_and_redact_batch(texts) -> list of (redacted_text, pii_found, detected_entities)
-    """
 
     def __init__(self, confidence_threshold: float = 0.8, enabled: bool = True):
         self.confidence_threshold = confidence_threshold
         self.enabled = enabled
 
-        # Build allowlist at init time (not module level) so env vars are resolved correctly
         from .config import settings
         env_allowlist = settings.PII_DOMAIN_ALLOWLIST
         self._domain_allowlist = (
@@ -166,28 +123,12 @@ class FoundryPiiScanner:
             else _DEFAULT_ALLOWLIST
         )
 
-    # ------------------------------------------------------------------
-    # Public methods
-    # ------------------------------------------------------------------
-
     def scan_and_redact_batch(self, texts: list[str]) -> list[tuple[str, bool, list[dict]]]:
-        """Batch scan multiple texts for PII.
-
-        Handles three cases per text:
-          1. Empty/whitespace -> skip
-          2. Over API_MAX_CHARS_PER_DOC -> split into sub-chunks, batch those
-          3. Under limit -> batch directly
-
-        All API calls respect API_MAX_DOCS_PER_BATCH. Failures are isolated
-        per-chunk (successful redactions are preserved even if some chunks fail).
-        """
         if not self.enabled:
             return [(t, False, []) for t in texts]
 
         results: list[tuple[str, bool, list[dict]] | None] = [None] * len(texts)
-
-        # Separate short (API-ready) texts from long texts needing sub-chunking
-        short_queue: list[tuple[int, str]] = []  # (original_index, text)
+        short_queue: list[tuple[int, str]] = []
 
         for idx, text in enumerate(texts):
             if not text or not text.strip():
@@ -197,11 +138,9 @@ class FoundryPiiScanner:
             else:
                 short_queue.append((idx, text))
 
-        # Process short texts in API-compliant batches
         if short_queue:
             self._process_short_batch(short_queue, texts, results)
 
-        # Safety: fill any remaining None slots (should not happen, but defensive)
         for idx in range(len(results)):
             if results[idx] is None:
                 logger.error(f"[PiiScanner] Chunk {idx} has no result — returning unredacted")
@@ -210,7 +149,6 @@ class FoundryPiiScanner:
         return results
 
     def scan_and_redact(self, text: str) -> tuple[str, bool, list[dict]]:
-        """Scan a single text for PII and redact."""
         if not self.enabled:
             return text, False, []
 
@@ -237,17 +175,7 @@ class FoundryPiiScanner:
             logger.error(f"[PiiScanner] scan_and_redact failed: {e}")
             return self._fallback(text, "exception")
 
-    # ------------------------------------------------------------------
-    # Internal: batch processing for short texts
-    # ------------------------------------------------------------------
-
-    def _process_short_batch(
-        self,
-        queue: list[tuple[int, str]],
-        all_texts: list[str],
-        results: list,
-    ):
-        """Send short texts to the API in batches of API_MAX_DOCS_PER_BATCH."""
+    def _process_short_batch(self, queue: list[tuple[int, str]], all_texts: list[str], results: list):
         try:
             client = _get_text_client()
         except Exception as e:
@@ -263,52 +191,33 @@ class FoundryPiiScanner:
 
             try:
                 api_results = _call_pii_api_with_retry(client, batch_texts)
-
                 for j, doc_result in enumerate(api_results):
                     orig_idx = batch_indices[j]
-                    orig_text = all_texts[orig_idx]
-
                     if doc_result.is_error:
                         logger.error(
                             f"[PiiScanner] Batch doc error (chunk_idx={orig_idx}): "
                             f"{doc_result.error.message}"
                         )
-                        results[orig_idx] = self._fallback(orig_text, "doc_error")
+                        results[orig_idx] = self._fallback(all_texts[orig_idx], "doc_error")
                         continue
-
-                    results[orig_idx] = self._process_doc_result(orig_text, doc_result)
+                    results[orig_idx] = self._process_doc_result(all_texts[orig_idx], doc_result)
 
             except Exception as e:
-                logger.error(
-                    f"[PiiScanner] Batch API call failed for chunks "
-                    f"{batch_indices}: {e}"
-                )
+                logger.error(f"[PiiScanner] Batch API call failed for chunks {batch_indices}: {e}")
                 for idx in batch_indices:
                     if results[idx] is None:
                         results[idx] = self._fallback(all_texts[idx], "batch_exception")
 
-    # ------------------------------------------------------------------
-    # Internal: long text handling (>5120 chars)
-    # ------------------------------------------------------------------
-
     def _scan_long_text(self, text: str) -> tuple[str, bool, list[dict]]:
-        """Split text >API_MAX_CHARS_PER_DOC into sub-chunks and scan each.
-
-        Sub-chunks are batched in groups of API_MAX_DOCS_PER_BATCH to respect
-        the API limit. Failures on individual sub-chunk batches are isolated —
-        successfully scanned sub-chunks still get redacted.
-        """
-        # Split on word boundaries, staying under the char limit
         sub_chunks = self._split_text(text)
 
-        # Pre-compute the char offset where each sub-chunk starts in the original
         chunk_offsets = []
         offset = 0
         for sc in sub_chunks:
             chunk_offsets.append(offset)
             offset += len(sc)
 
-        all_entities = []  # list of (global_offset, length, entity)
+        all_entities = []
         failed_chunk_indices = []
 
         try:
@@ -317,14 +226,12 @@ class FoundryPiiScanner:
             logger.error(f"[PiiScanner] Failed to get client for long text: {e}")
             return self._fallback(text, "client_init_long")
 
-        # Send sub-chunks in API-compliant batches
         for batch_start in range(0, len(sub_chunks), API_MAX_DOCS_PER_BATCH):
             batch = sub_chunks[batch_start:batch_start + API_MAX_DOCS_PER_BATCH]
             batch_chunk_ids = list(range(batch_start, batch_start + len(batch)))
 
             try:
                 api_results = _call_pii_api_with_retry(client, batch)
-
                 for j, doc_result in enumerate(api_results):
                     chunk_idx = batch_chunk_ids[j]
                     if doc_result.is_error:
@@ -337,16 +244,11 @@ class FoundryPiiScanner:
 
                     offset_base = chunk_offsets[chunk_idx]
                     for entity in self._filter_entities(doc_result.entities):
-                        all_entities.append((
-                            offset_base + entity.offset,
-                            entity.length,
-                            entity,
-                        ))
+                        all_entities.append((offset_base + entity.offset, entity.length, entity))
 
             except Exception as e:
                 logger.error(
-                    f"[PiiScanner] Long text batch failed for sub-chunks "
-                    f"{batch_chunk_ids}: {e}"
+                    f"[PiiScanner] Long text batch failed for sub-chunks {batch_chunk_ids}: {e}"
                 )
                 failed_chunk_indices.extend(batch_chunk_ids)
 
@@ -360,7 +262,7 @@ class FoundryPiiScanner:
         if not all_entities:
             return text, False, []
 
-        # Apply redactions from end to start so offsets stay valid
+        # Apply redactions end-to-start so offsets stay valid
         redacted = text
         sorted_entities = sorted(all_entities, key=lambda e: e[0], reverse=True)
         for global_offset, length, entity in sorted_entities:
@@ -386,13 +288,11 @@ class FoundryPiiScanner:
 
     @staticmethod
     def _split_text(text: str) -> list[str]:
-        """Split text into sub-chunks of <= _CHUNK_TARGET_SIZE on word boundaries."""
         chunks = []
         start = 0
         while start < len(text):
             end = start + _CHUNK_TARGET_SIZE
             if end < len(text):
-                # Find last space within range to avoid splitting mid-word
                 space_idx = text.rfind(" ", start, end)
                 if space_idx > start:
                     end = space_idx + 1
@@ -402,12 +302,7 @@ class FoundryPiiScanner:
             start = end
         return chunks
 
-    # ------------------------------------------------------------------
-    # Entity filtering and redaction helpers
-    # ------------------------------------------------------------------
-
     def _filter_entities(self, entities):
-        """Keep only entities in our category list that meet confidence threshold."""
         return [
             e for e in entities
             if e.category in _CATEGORY_LABELS
@@ -416,7 +311,6 @@ class FoundryPiiScanner:
         ]
 
     def _process_doc_result(self, text: str, doc_result) -> tuple[str, bool, list[dict]]:
-        """Extract entities from a single API doc result and apply redactions."""
         if not doc_result.entities:
             return text, False, []
 
@@ -433,7 +327,6 @@ class FoundryPiiScanner:
         return redacted_text, True, detected
 
     def _apply_custom_labels(self, original_text: str, entities) -> str:
-        """Replace PII entities with labeled placeholders (reverse order for stable offsets)."""
         sorted_entities = sorted(entities, key=lambda e: e.offset, reverse=True)
         result = original_text
         for entity in sorted_entities:
@@ -444,7 +337,6 @@ class FoundryPiiScanner:
         return result
 
     def _make_detected_list(self, entities) -> list[dict]:
-        """Build a serializable list of detected PII for metadata."""
         return [
             {
                 "entity_type": e.category,
@@ -456,12 +348,7 @@ class FoundryPiiScanner:
             for e in entities
         ]
 
-    # ------------------------------------------------------------------
-    # Fallback
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _fallback(text: str, reason: str) -> tuple[str, bool, list[dict]]:
-        """Return text unredacted when PII scan fails. Logs the reason."""
         logger.warning(f"[PiiScanner] Returning text without redaction (reason={reason})")
         return text, False, []

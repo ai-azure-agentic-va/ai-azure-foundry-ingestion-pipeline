@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class MarkdownParser(BaseParser):
-    """AST-based markdown parser using mistune v3 with frontmatter extraction."""
 
     def __init__(self) -> None:
         self._md = mistune.create_markdown(renderer="ast", plugins=["table"])
@@ -53,7 +52,6 @@ class MarkdownParser(BaseParser):
 
 
 def _extract_text(children: list[dict]) -> str:
-    """Recursively extract plain text from AST children."""
     parts = []
     for child in children:
         t = child.get("type", "")
@@ -69,7 +67,6 @@ def _extract_text(children: list[dict]) -> str:
 
 
 def _extract_table(token: dict) -> dict:
-    """Extract table as {headers: [...], rows: [[...], ...]}."""
     table_headers = []
     rows = []
     for child in token.get("children", []):
@@ -86,7 +83,6 @@ def _extract_table(token: dict) -> dict:
 
 
 def _extract_list_text(token: dict) -> str:
-    """Extract text from a list token, preserving bullet structure."""
     lines = []
     for item in token.get("children", []):
         parts = []
@@ -105,7 +101,6 @@ def _extract_list_text(token: dict) -> str:
 
 
 def _walk_ast(tokens: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
-    """Walk AST to extract headers, tables, and header-prefixed sections."""
     headers = []
     tables = []
     sections = []

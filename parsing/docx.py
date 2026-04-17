@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class DocxParser(BaseParser):
-    """Extract text and tables from DOCX files using python-docx."""
 
     @property
     def supported_extensions(self) -> list[str]:

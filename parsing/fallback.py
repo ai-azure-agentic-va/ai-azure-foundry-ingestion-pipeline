@@ -29,7 +29,6 @@ for parser in _PARSERS:
 
 
 class ParserFactory:
-    """Route file to the correct parser based on extension."""
 
     @staticmethod
     def parse(file_bytes: bytes, file_name: str) -> ParseResult:

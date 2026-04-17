@@ -1,11 +1,4 @@
-"""Push chunks to Azure AI Search index (merge_or_upload for idempotent upserts).
-
-Production-grade implementation with:
-- Retry with exponential backoff + jitter on transient failures
-- Reduced batch size (100) to stay under 16MB payload limit with 3072-dim vectors
-- Inter-batch pacing to avoid overwhelming the search service
-- Filtering of chunks with missing embeddings (content_vector=None)
-"""
+"""Push chunks to Azure AI Search index (merge_or_upload for idempotent upserts)."""
 
 import logging
 import random
@@ -41,13 +34,11 @@ FOUNDRY_VECTORIZER_ENDPOINT = _cfg.FOUNDRY_ENDPOINT or ""
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = _cfg.FOUNDRY_EMBEDDING_DEPLOYMENT
 AZURE_OPENAI_EMBEDDING_MODEL = _cfg.FOUNDRY_EMBEDDING_MODEL
 
-# Retry settings for transient push failures
 _PUSH_MAX_RETRIES = 5
 _PUSH_BACKOFF_CEILING = 30.0
 
 
 def _build_index_schema(index_name: str) -> SearchIndex:
-    """Build the AI Search index schema matching the ingestion pipeline output."""
     fields = [
         SimpleField(name="id", type=SearchFieldDataType.String, key=True, filterable=True),
         SearchableField(name="chunk_content", type=SearchFieldDataType.String, analyzer_name="en.microsoft"),
@@ -86,9 +77,7 @@ def _build_index_schema(index_name: str) -> SearchIndex:
             ),
         )
 
-    sq_compression = ScalarQuantizationCompression(
-        compression_name="sq-compression",
-    )
+    sq_compression = ScalarQuantizationCompression(compression_name="sq-compression")
 
     vector_search = VectorSearch(
         algorithms=[
@@ -121,18 +110,16 @@ def _build_index_schema(index_name: str) -> SearchIndex:
             ],
         ),
     )
-    semantic_search = SemanticSearch(configurations=[semantic_config])
 
     return SearchIndex(
         name=index_name,
         fields=fields,
         vector_search=vector_search,
-        semantic_search=semantic_search,
+        semantic_search=SemanticSearch(configurations=[semantic_config]),
     )
 
 
 class SearchPusher:
-    """Push document chunks to Azure AI Search. Creates index if it doesn't exist."""
 
     def __init__(self, endpoint: str | None = None, index_name: str | None = None):
         self.endpoint = endpoint or _cfg.SEARCH_ENDPOINT
@@ -142,7 +129,6 @@ class SearchPusher:
             raise ValueError("SEARCH_ENDPOINT is required")
 
         credential = DefaultAzureCredential()
-
         self._index_client = SearchIndexClient(endpoint=self.endpoint, credential=credential)
         self.client = SearchClient(
             endpoint=self.endpoint, index_name=self.index_name, credential=credential
@@ -152,7 +138,6 @@ class SearchPusher:
         logger.info(f"[SearchPusher] Initialized: endpoint={self.endpoint}, index={self.index_name}")
 
     def ensure_index_exists(self):
-        """Create or update the search index (idempotent)."""
         try:
             index_schema = _build_index_schema(self.index_name)
             self._index_client.create_or_update_index(index_schema)
@@ -162,11 +147,7 @@ class SearchPusher:
             raise
 
     def delete_document_chunks(self, file_path: str) -> int:
-        """Delete all existing chunks for a document before re-indexing.
-
-        Finds chunks by file_name filter, then verifies breadcrumb matches
-        to avoid deleting chunks from a different document with the same name.
-        """
+        """Delete all existing chunks for a document before re-indexing."""
         import os
         file_name = os.path.basename(file_path)
         if not file_name:
@@ -198,22 +179,15 @@ class SearchPusher:
             return 0
 
     def push(self, chunks: list[dict], batch_size: int | None = None) -> dict:
-        """Push chunks to AI Search using merge_or_upload for idempotent upserts.
-
-        Filters out chunks with content_vector=None (failed embedding).
-        Uses reduced batch size (100) to stay under 16MB payload limit
-        with 3072-dimensional vectors (~40-60KB per chunk serialized).
-        """
         if batch_size is None:
             batch_size = _cfg.SEARCH_PUSH_BATCH_SIZE
 
-        # Filter out chunks that failed embedding (content_vector=None)
+        # Skip chunks that failed embedding (content_vector=None)
         pushable = [c for c in chunks if c.get("content_vector") is not None]
         skipped = len(chunks) - len(pushable)
         if skipped > 0:
             logger.warning(
-                f"[SearchPusher] Skipping {skipped}/{len(chunks)} chunks "
-                f"with missing embeddings (content_vector=None)"
+                f"[SearchPusher] Skipping {skipped}/{len(chunks)} chunks with missing embeddings"
             )
 
         total_success = 0
@@ -231,7 +205,6 @@ class SearchPusher:
             total_failed += failed
             errors.extend(batch_errors)
 
-            # Inter-batch pacing to avoid overwhelming the search service
             if i + batch_size < len(pushable):
                 time.sleep(random.uniform(0.1, 0.5))
 
@@ -242,7 +215,6 @@ class SearchPusher:
         return {"success": total_success, "failed": total_failed, "skipped": skipped, "errors": errors}
 
     def _push_batch_with_retry(self, batch: list[dict]) -> tuple[int, int, list[str]]:
-        """Push a single batch with retry + exponential backoff + jitter."""
         for attempt in range(_PUSH_MAX_RETRIES):
             try:
                 result = self.client.merge_or_upload_documents(documents=batch)
@@ -277,5 +249,4 @@ class SearchPusher:
                     logger.error(f"[SearchPusher] {err_msg}")
                     return 0, len(batch), [err_msg]
 
-        # Unreachable, but satisfies type checker
         return 0, len(batch), ["Retry loop completed without return"]

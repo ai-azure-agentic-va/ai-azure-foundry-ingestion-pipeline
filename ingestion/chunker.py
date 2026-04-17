@@ -14,7 +14,6 @@ _SHEET_HEADER_RE = re.compile(r"(?m)^Sheet:\s*(.+)$")
 
 
 class TokenChunker:
-    """Split text into token-sized chunks for standard documents."""
 
     def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200, encoding: str = "cl100k_base"):
         self.enc = tiktoken.get_encoding(encoding)
@@ -32,18 +31,11 @@ class TokenChunker:
 
         chunks = self.splitter.split_text(text)
         logger.info(f"[TokenChunker] Split into {len(chunks)} chunks")
-
-        return [
-            _build_chunk_dict(metadata, i, chunk, len(chunks))
-            for i, chunk in enumerate(chunks)
-        ]
+        return [_build_chunk_dict(metadata, i, chunk, len(chunks)) for i, chunk in enumerate(chunks)]
 
 
 class MarkdownChunker:
-    """Split markdown using pre-parsed sections from MarkdownParser (mistune AST).
-
-    Falls back to plain token splitting if sections aren't available.
-    """
+    """Splits on pre-parsed AST sections from MarkdownParser, falls back to token splitting."""
 
     def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200):
         self.token_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
@@ -63,21 +55,16 @@ class MarkdownChunker:
         if sections:
             for section in sections:
                 all_chunks.extend(self.token_splitter.split_text(section))
-            logger.info(
-                f"[MarkdownChunker] Split into {len(all_chunks)} chunks from {len(sections)} AST sections"
-            )
+            logger.info(f"[MarkdownChunker] Split into {len(all_chunks)} chunks from {len(sections)} AST sections")
         else:
             all_chunks = self.token_splitter.split_text(text)
             logger.info(f"[MarkdownChunker] Fallback split into {len(all_chunks)} chunks")
 
-        return [
-            _build_chunk_dict(metadata, i, chunk, len(all_chunks))
-            for i, chunk in enumerate(all_chunks)
-        ]
+        return [_build_chunk_dict(metadata, i, chunk, len(all_chunks)) for i, chunk in enumerate(all_chunks)]
 
 
 class SheetChunker:
-    """Split Excel files by sheet, then by rows within a sheet."""
+    """Splits Excel files by sheet, then by rows within each sheet."""
 
     def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200):
         self.token_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
@@ -100,19 +87,11 @@ class SheetChunker:
                 all_chunks.append(f"[Sheet: {sheet_name}]\n{sub}")
 
         logger.info(f"[SheetChunker] Split into {len(all_chunks)} chunks from {len(sheets)} sheets")
-
-        return [
-            _build_chunk_dict(metadata, i, chunk, len(all_chunks))
-            for i, chunk in enumerate(all_chunks)
-        ]
+        return [_build_chunk_dict(metadata, i, chunk, len(all_chunks)) for i, chunk in enumerate(all_chunks)]
 
 
 class SemanticChunker:
-    """Split documents using page boundaries from the parser.
-
-    Merges small consecutive pages up to token limit, splits large pages further.
-    Falls back to recursive splitting if page info isn't available.
-    """
+    """Merges small consecutive pages up to token limit, splits large pages further."""
 
     def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 200):
         self.chunk_size = chunk_size
@@ -168,14 +147,10 @@ class SemanticChunker:
             all_chunks = self.token_splitter.split_text(text)
             logger.info(f"[SemanticChunker] Fallback split into {len(all_chunks)} chunks")
 
-        return [
-            _build_chunk_dict(metadata, i, chunk, len(all_chunks))
-            for i, chunk in enumerate(all_chunks)
-        ]
+        return [_build_chunk_dict(metadata, i, chunk, len(all_chunks)) for i, chunk in enumerate(all_chunks)]
 
 
 def _split_on_sheet_headers(text: str) -> list[tuple[str, str]]:
-    """Split XlsxParser output on 'Sheet: <name>' lines."""
     parts = _SHEET_HEADER_RE.split(text)
     if len(parts) < 3:
         return [("default", text.strip())]
@@ -191,7 +166,6 @@ def _split_on_sheet_headers(text: str) -> list[tuple[str, str]]:
 
 
 class ChunkerFactory:
-    """Route to the correct chunking strategy based on file extension."""
 
     def __init__(self):
         from .config import settings
@@ -238,22 +212,15 @@ class ChunkerFactory:
 
 
 def _make_chunk_id(file_path: str, chunk_index: int) -> str:
-    """Deterministic chunk ID for idempotent upserts."""
     raw = f"{file_path}_{chunk_index}"
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
 def _make_breadcrumb(file_path: str) -> str:
-    """Build a human-readable breadcrumb from a blob path.
-
-    Example: 'wiki/Engineering/Platform/setup-guide.pdf'
-          → 'Engineering > Platform > setup-guide.pdf'
-    Strips known container prefixes (raw-documents, wiki, sharepoint).
-    """
+    """'wiki/Engineering/Platform/setup.pdf' → 'Engineering > Platform > setup.pdf'"""
     if not file_path:
         return ""
     parts = file_path.replace("\\", "/").strip("/").split("/")
-    # Strip common container/prefix segments
     skip_prefixes = {"raw-documents", "wiki", "sharepoint", "documents"}
     while parts and parts[0].lower() in skip_prefixes:
         parts.pop(0)
@@ -264,7 +231,6 @@ _PAGE_NUM_RE = re.compile(r"^\[Page\s+(\d+)\]")
 
 
 def _extract_page_number(chunk_content: str, metadata_page: int | None) -> int | None:
-    """Extract page number from chunk content prefix, or use metadata fallback."""
     if metadata_page:
         return metadata_page
     m = _PAGE_NUM_RE.search(chunk_content)

@@ -1,4 +1,7 @@
-"""AI Foundry Services document processing pipeline."""
+"""AI Foundry Services document processing pipeline.
+
+6-stage pipeline: Read → Parse → Chunk → PII scan → Embed → Push to AI Search.
+"""
 
 import logging
 import os
@@ -14,10 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class FoundryDocPipeline:
-    """Process documents: Read → Parse → Chunk → PII scan → Embed → Push to AI Search."""
 
     PIPELINE_NAME = "AI_FOUNDRY_SERVICES"
-    # Circuit breaker: fail document after N consecutive PII failures
     _PII_CIRCUIT_BREAKER_THRESHOLD = 3
 
     def __init__(self):
@@ -37,7 +38,6 @@ class FoundryDocPipeline:
         logger.info("[FoundryDocPipeline] Initialized (Content Understanding + Azure Language PII)")
 
     def process_document(self, container: str, blob_path: str, metadata: dict | None = None) -> dict:
-        """Process a single document through the AI Foundry pipeline."""
         file_name = os.path.basename(blob_path)
         logger.info(f"[FoundryDocPipeline] START: {container}/{blob_path}")
 
@@ -49,7 +49,6 @@ class FoundryDocPipeline:
             logger.error(f"[FoundryDocPipeline] Failed to read blob: {e}")
             return {"status": "error", "stage": "read", "error": str(e)}
 
-        # Merge metadata: blob metadata > sidecar > trigger-provided defaults
         if metadata is None:
             metadata = {}
         blob_meta = self.adls.read_blob_metadata(container, blob_path)
@@ -65,7 +64,6 @@ class FoundryDocPipeline:
         metadata.setdefault("file_path", blob_path)
         metadata.setdefault("source_type", _infer_source_type(blob_path))
 
-        # Validate required metadata — source_type and source_url must exist
         if not metadata.get("source_type"):
             logger.warning(f"[FoundryDocPipeline] Missing source_type for {file_name} — skipping")
             return {"status": "skipped", "reason": "missing_source_type"}
@@ -76,7 +74,7 @@ class FoundryDocPipeline:
         # 2. Parse document
         try:
             parse_result = self.parser.parse(file_bytes, file_name)
-            del file_bytes  # free raw bytes immediately after parse
+            del file_bytes
             if not parse_result.full_text.strip():
                 logger.warning(f"[FoundryDocPipeline] No text extracted from {file_name}")
                 return {"status": "skipped", "reason": "no_text_extracted"}
@@ -113,13 +111,12 @@ class FoundryDocPipeline:
                 chunk["pii_redacted"] = pii_found
                 if pii_found:
                     pii_count += 1
-            self._pii_consecutive_failures = 0  # reset on success
+            self._pii_consecutive_failures = 0
             logger.info(f"[FoundryDocPipeline] [4/6] PII scan: {pii_count}/{len(chunks)} chunks had PII redacted")
         except Exception as e:
             self._pii_consecutive_failures += 1
             logger.error(f"[FoundryDocPipeline] PII scan failed for {file_name}: {e}")
-            # Circuit breaker: if PII is enabled and consistently failing, halt
-            # to prevent indexing unredacted PII (compliance risk)
+
             if (
                 self.pii_scanner.enabled
                 and self._pii_consecutive_failures >= self._PII_CIRCUIT_BREAKER_THRESHOLD
@@ -180,7 +177,6 @@ class FoundryDocPipeline:
 
 
 def _infer_source_type(blob_path: str) -> str:
-    """Infer source type from blob path prefix using configurable patterns."""
     from .config import settings as _cfg
     path_lower = blob_path.lower()
     for pattern in _cfg.SOURCE_TYPE_SHAREPOINT_PATTERNS.split(","):

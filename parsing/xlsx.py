@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class XlsxParser(BaseParser):
-    """Extract sheet data from Excel files using openpyxl."""
 
     @property
     def supported_extensions(self) -> list[str]:

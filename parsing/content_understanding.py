@@ -1,4 +1,8 @@
-"""Document parsing via Azure AI Content Understanding through Foundry endpoint."""
+"""Document parsing via Azure AI Content Understanding.
+
+Binary formats (PDF, DOCX, PPTX, images) go through CU. Text-based formats
+bypass CU and route to fallback parsers.
+"""
 
 import io
 import logging
@@ -7,7 +11,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-# Text-based formats bypass Content Understanding — CU adds no value for these
+# Text formats bypass CU — it adds no value for these
 _DIRECT_PARSE_EXTENSIONS = {
     ".md", ".markdown",
     ".txt", ".text",
@@ -15,17 +19,11 @@ _DIRECT_PARSE_EXTENSIONS = {
     ".xlsx", ".xls", ".xlsm",
 }
 
-# Image formats that may need resolution preprocessing
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tiff", ".bmp"}
 
-# Azure CU max: 10,000 x 10,000 pixels
-_CU_MAX_DIMENSION = 10000
+_CU_MAX_DIMENSION = 10000  # Azure CU pixel limit
+_MAX_IMAGE_BYTES = 200 * 1024 * 1024  # prevents OOM on Consumption plan
 
-
-# Max file size for image preprocessing (200MB) — prevents OOM on Consumption plan
-_MAX_IMAGE_BYTES = 200 * 1024 * 1024
-
-# Extension to PIL format mapping
 _EXT_TO_FORMAT = {
     ".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG",
     ".tiff": "TIFF", ".bmp": "BMP",
@@ -33,7 +31,7 @@ _EXT_TO_FORMAT = {
 
 
 def _preprocess_image(file_bytes: bytes, file_name: str) -> bytes:
-    """Downscale images exceeding CU's 10K x 10K limit. Returns original bytes if OK."""
+    """Downscale images exceeding CU's 10K x 10K limit."""
     if len(file_bytes) > _MAX_IMAGE_BYTES:
         logger.warning(
             f"[ImagePreprocess] '{file_name}' is {len(file_bytes) / 1024 / 1024:.0f}MB "
@@ -43,9 +41,7 @@ def _preprocess_image(file_bytes: bytes, file_name: str) -> bytes:
 
     try:
         from PIL import Image
-
-        # Guard against decompression bombs (e.g., 30K×40K TIFF = 4.8GB in RAM)
-        Image.MAX_IMAGE_PIXELS = 178_956_970  # ~13K×13K
+        Image.MAX_IMAGE_PIXELS = 178_956_970  # ~13K×13K — guard against decompression bombs
 
         img = Image.open(io.BytesIO(file_bytes))
         w, h = img.size
@@ -55,14 +51,11 @@ def _preprocess_image(file_bytes: bytes, file_name: str) -> bytes:
 
         scale = min(_CU_MAX_DIMENSION / w, _CU_MAX_DIMENSION / h)
         new_w, new_h = int(w * scale), int(h * scale)
-        logger.info(
-            f"[ImagePreprocess] Resizing '{file_name}' from {w}x{h} to {new_w}x{new_h}"
-        )
+        logger.info(f"[ImagePreprocess] Resizing '{file_name}' from {w}x{h} to {new_w}x{new_h}")
 
         img = img.resize((new_w, new_h), Image.LANCZOS)
         buf = io.BytesIO()
-        ext = os.path.splitext(file_name)[1].lower()
-        fmt = _EXT_TO_FORMAT.get(ext, "PNG")
+        fmt = _EXT_TO_FORMAT.get(os.path.splitext(file_name)[1].lower(), "PNG")
         img.save(buf, format=fmt)
         return buf.getvalue()
 
@@ -75,11 +68,6 @@ def _preprocess_image(file_bytes: bytes, file_name: str) -> bytes:
 
 
 class FoundryParser:
-    """Parse documents using Azure AI Content Understanding via Foundry.
-
-    Binary formats (PDF, DOCX, PPTX, images) go through CU in one API call.
-    Text-based formats bypass CU and route directly to fallback parsers.
-    """
 
     def __init__(self, endpoint: str | None = None, analyzer_id: str | None = None):
         from ingestion.config import settings
@@ -93,12 +81,9 @@ class FoundryParser:
         self._client = None
         self._client_lock = threading.Lock()
 
-        logger.info(
-            f"[FoundryParser] Initialized: endpoint={self.endpoint}, analyzer={self.analyzer_id}"
-        )
+        logger.info(f"[FoundryParser] Initialized: endpoint={self.endpoint}, analyzer={self.analyzer_id}")
 
     def _get_client(self) -> "ContentUnderstandingClient":
-        """Lazy-load Content Understanding client (thread-safe)."""
         if self._client is None:
             with self._client_lock:
                 if self._client is None:
@@ -113,7 +98,6 @@ class FoundryParser:
         return self._client
 
     def parse(self, file_bytes: bytes, file_name: str = "document") -> "ParseResult":
-        """Parse document using Content Understanding, with fallback to custom parsers."""
         from parsing.base import ParseResult
 
         ext = os.path.splitext(file_name)[1].lower()
@@ -121,7 +105,6 @@ class FoundryParser:
             logger.info(f"[FoundryParser] Text format '{ext}' — routing to custom parser")
             return self._fallback_parse(file_bytes, file_name)
 
-        # Preprocess images that exceed CU's 10K x 10K pixel limit
         is_image = ext in _IMAGE_EXTENSIONS
         if is_image:
             file_bytes = _preprocess_image(file_bytes, file_name)
@@ -132,7 +115,6 @@ class FoundryParser:
 
         try:
             client = self._get_client()
-
             poller = client.begin_analyze_binary(
                 analyzer_id=self.analyzer_id,
                 binary_input=file_bytes,
@@ -164,6 +146,7 @@ class FoundryParser:
                 if content.pages:
                     for page in content.pages:
                         page_text = ""
+                        # Extract text via page spans (offset+length into full_text)
                         if hasattr(page, "spans") and page.spans and full_text:
                             parts = []
                             for span in page.spans:
@@ -174,7 +157,7 @@ class FoundryParser:
                             page_text = "".join(parts)
                         pages.append({"page_number": page.page_number, "text": page_text})
 
-                    # If spans didn't populate text, split markdown proportionally
+                    # Fallback: split markdown proportionally if spans didn't populate
                     if pages and not any(p["text"].strip() for p in pages):
                         n = len(pages)
                         chunk_size = max(1, len(full_text) // n)
@@ -216,7 +199,6 @@ class FoundryParser:
             return self._fallback_parse(file_bytes, file_name)
 
     def _parse_image_with_doc_intelligence(self, file_bytes: bytes, file_name: str) -> "ParseResult":
-        """Parse image using Azure Document Intelligence (prebuilt-read) for OCR."""
         from parsing.base import ParseResult
 
         try:
@@ -225,10 +207,7 @@ class FoundryParser:
             from ingestion.config import settings as _di_cfg
 
             endpoint = _di_cfg.DOC_INTELLIGENCE_ENDPOINT or _di_cfg.FOUNDRY_ENDPOINT
-            credential = DefaultAzureCredential()
-
-            # Images already preprocessed before CU attempt
-            client = DocumentIntelligenceClient(endpoint=endpoint, credential=credential)
+            client = DocumentIntelligenceClient(endpoint=endpoint, credential=DefaultAzureCredential())
             poller = client.begin_analyze_document(
                 "prebuilt-read",
                 analyze_request=file_bytes,
@@ -239,10 +218,7 @@ class FoundryParser:
             text = result.content or ""
             page_count = len(result.pages) if result.pages else 1
 
-            logger.info(
-                f"[DocIntelligence] Extracted {len(text)} chars, {page_count} pages from '{file_name}'"
-            )
-
+            logger.info(f"[DocIntelligence] Extracted {len(text)} chars, {page_count} pages from '{file_name}'")
             return ParseResult(
                 full_text=text,
                 page_count=page_count,
@@ -257,7 +233,5 @@ class FoundryParser:
             return ParseResult(full_text="", metadata={"format": "unsupported", "error": str(e)})
 
     def _fallback_parse(self, file_bytes: bytes, file_name: str) -> "ParseResult":
-        """Fall back to custom parser if Content Understanding fails or is skipped."""
         from parsing.fallback import ParserFactory
-
         return ParserFactory.parse(file_bytes, file_name)

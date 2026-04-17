@@ -1,8 +1,4 @@
-"""Azure Functions entry point for ai-foundry-processing.
-
-Triggers: Event Grid, Queue, Blob, HTTP health check.
-Trigger mode controlled by TRIGGER_MODE env var: EVENTGRID_DIRECT, EVENTGRID_QUEUE, BLOB.
-"""
+"""Azure Functions entry point — Event Grid, Queue, Blob, and HTTP health triggers."""
 
 import json
 import logging
@@ -13,8 +9,6 @@ import azure.functions as func
 
 from ingestion.config import settings as _cfg
 
-# Extension allow list — reject unsupported files before any processing.
-# This is the FIRST gate, independent of source system or parser.
 ALLOWED_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".xlsm",
     ".pptx", ".ppt", ".csv", ".txt", ".md", ".markdown",
@@ -22,13 +16,7 @@ ALLOWED_EXTENSIONS = {
 }
 
 
-
 def _is_allowed_extension(blob_path: str) -> bool:
-    """Check if file extension is in the allow list.
-
-    This is the SINGLE source of truth for ingest/reject decisions.
-    Extension determines parser capability — if we can't parse it, we don't ingest it.
-    """
     ext = os.path.splitext(blob_path)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         logger.warning(f"[AllowList] Rejecting unsupported file: {blob_path} (ext: {ext or 'none'})")
@@ -40,11 +28,6 @@ app = func.FunctionApp()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=getattr(logging, _cfg.LOG_LEVEL))
 
-# Search index is created lazily by FoundryDocPipeline.pusher on first use.
-# No module-level SearchPusher — avoids blocking cold start if Search is down,
-# and avoids duplicate credential/index creation (pipeline creates its own).
-
-# Lazy-loaded pipeline with thread-safe double-checked locking
 _pipeline = None
 _pipeline_lock = threading.Lock()
 
@@ -55,14 +38,12 @@ def _get_pipeline() -> "FoundryDocPipeline":
         with _pipeline_lock:
             if _pipeline is None:
                 from ingestion.pipeline import FoundryDocPipeline
-
                 _pipeline = FoundryDocPipeline()
                 logger.info(f"[Functions] Pipeline initialized: {_pipeline.PIPELINE_NAME}")
     return _pipeline
 
 
 def _extract_blob_info(data: dict) -> tuple[str, str, str, int] | None:
-    """Extract (container, blob_path, content_type, content_length) from event data."""
     blob_url = data.get("url", "")
     content_type = data.get("contentType", "")
     content_length = data.get("contentLength", 0)
@@ -83,12 +64,10 @@ def _extract_blob_info(data: dict) -> tuple[str, str, str, int] | None:
         logger.debug(f"[Trigger] Skipping zero-byte file: {blob_path}")
         return None
 
-    # Folder detection for Event Grid / Queue triggers
     if blob_path.endswith("/"):
         logger.info(f"[Trigger] Skipping folder marker: {blob_path}")
         return None
 
-    # Extension allow list gate — single source of truth
     if not _is_allowed_extension(blob_path):
         return None
 
@@ -98,7 +77,6 @@ def _extract_blob_info(data: dict) -> tuple[str, str, str, int] | None:
 @app.function_name("process_new_document")
 @app.event_grid_trigger(arg_name="event")
 def process_new_document(event: func.EventGridEvent):
-    """Event Grid trigger: BlobCreated on ADLS raw-documents container."""
     logger.info(f"[EventGrid] Received event: {event.event_type}, subject: {event.subject}")
 
     data = event.get_json()
@@ -131,7 +109,6 @@ def process_new_document(event: func.EventGridEvent):
     connection="ADLS_QUEUE_CONNECTION",
 )
 def process_queue_document(msg: func.QueueMessage):
-    """Queue trigger: Event Grid → Queue → Function."""
     try:
         body = msg.get_body().decode("utf-8")
         event_payload = json.loads(body)
@@ -168,7 +145,6 @@ def process_queue_document(msg: func.QueueMessage):
     connection="ADLS_BLOB_CONNECTION",
 )
 def process_blob_document(blob: func.InputStream):
-    """Blob trigger: polls storage directly for new/updated blobs."""
     blob_meta = blob.metadata or {}
     if blob_meta.get("hdi_isfolder") == "true":
         logger.info(f"[BlobTrigger] Skipping folder creation event: {blob.name}")
@@ -188,7 +164,6 @@ def process_blob_document(blob: func.InputStream):
         logger.debug(f"[BlobTrigger] Skipping zero-byte file: {blob_name}")
         return
 
-    # Extension allow list gate — single source of truth
     if not _is_allowed_extension(blob_name):
         return
 
@@ -219,7 +194,6 @@ def process_blob_document(blob: func.InputStream):
 @app.function_name("health_check")
 @app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def health_check(req: func.HttpRequest) -> func.HttpResponse:
-    """Health check endpoint."""
     return func.HttpResponse(
         json.dumps({
             "status": "healthy",
