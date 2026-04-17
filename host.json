@@ -22,12 +22,12 @@
     },
     "queues": {
       "batchSize": 1,
-      "maxDequeueCount": 1,
+      "maxDequeueCount": 3,
       "visibilityTimeout": "00:05:00"
     },
     "blobs": {
       "maxDegreeOfParallelism": 3,
-      "poisonBlobThreshold": 999
+      "poisonBlobThreshold": -1
     }
   },
   "extensionBundle": {

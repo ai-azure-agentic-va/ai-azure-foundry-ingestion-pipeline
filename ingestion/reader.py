@@ -34,17 +34,33 @@ class AdlsReader:
         logger.info(f"[AdlsReader] Initialized for account={self.account_name}")
 
     def read_blob(self, container: str, blob_path: str) -> bytes:
+        from .config import settings
+        max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+
         blob_client = self.blob_service.get_blob_client(container=container, blob=blob_path)
+        props = blob_client.get_blob_properties()
+        if props.size and props.size > max_bytes:
+            raise ValueError(
+                f"File too large: {blob_path} is {props.size / 1024 / 1024:.0f}MB "
+                f"(limit: {settings.MAX_FILE_SIZE_MB}MB)"
+            )
+
         data = blob_client.download_blob().readall()
         logger.debug(f"[AdlsReader] Read {len(data)} bytes from {container}/{blob_path}")
         return data
 
     def read_blob_metadata(self, container: str, blob_path: str) -> dict:
-        """Read blob-level metadata properties (key-value pairs set by ADF sync)."""
+        """Read blob-level metadata and system properties (last_modified, content_type)."""
         try:
             blob_client = self.blob_service.get_blob_client(container=container, blob=blob_path)
             props = blob_client.get_blob_properties()
             metadata = dict(props.metadata) if props.metadata else {}
+
+            if props.last_modified:
+                metadata["last_modified"] = props.last_modified.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if props.content_settings and props.content_settings.content_type:
+                metadata.setdefault("content_type", props.content_settings.content_type)
+
             if metadata:
                 logger.info(f"[AdlsReader] Blob metadata for {blob_path}: {list(metadata.keys())}")
             return metadata

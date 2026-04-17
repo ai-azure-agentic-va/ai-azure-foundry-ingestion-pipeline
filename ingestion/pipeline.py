@@ -17,6 +17,8 @@ class FoundryDocPipeline:
     """Process documents: Read → Parse → Chunk → PII scan → Embed → Push to AI Search."""
 
     PIPELINE_NAME = "AI_FOUNDRY_SERVICES"
+    # Circuit breaker: fail document after N consecutive PII failures
+    _PII_CIRCUIT_BREAKER_THRESHOLD = 3
 
     def __init__(self):
         self.adls = AdlsReader()
@@ -30,6 +32,7 @@ class FoundryDocPipeline:
         )
         self.embedder = FoundryEmbedder()
         self.pusher = SearchPusher()
+        self._pii_consecutive_failures = 0
 
         logger.info("[FoundryDocPipeline] Initialized (Content Understanding + Azure Language PII)")
 
@@ -73,6 +76,7 @@ class FoundryDocPipeline:
         # 2. Parse document
         try:
             parse_result = self.parser.parse(file_bytes, file_name)
+            del file_bytes  # free raw bytes immediately after parse
             if not parse_result.full_text.strip():
                 logger.warning(f"[FoundryDocPipeline] No text extracted from {file_name}")
                 return {"status": "skipped", "reason": "no_text_extracted"}
@@ -109,10 +113,34 @@ class FoundryDocPipeline:
                 chunk["pii_redacted"] = pii_found
                 if pii_found:
                     pii_count += 1
+            self._pii_consecutive_failures = 0  # reset on success
             logger.info(f"[FoundryDocPipeline] [4/6] PII scan: {pii_count}/{len(chunks)} chunks had PII redacted")
         except Exception as e:
+            self._pii_consecutive_failures += 1
             logger.error(f"[FoundryDocPipeline] PII scan failed for {file_name}: {e}")
-            logger.warning("[FoundryDocPipeline] Proceeding without PII redaction")
+            # Circuit breaker: if PII is enabled and consistently failing, halt
+            # to prevent indexing unredacted PII (compliance risk)
+            if (
+                self.pii_scanner.enabled
+                and self._pii_consecutive_failures >= self._PII_CIRCUIT_BREAKER_THRESHOLD
+            ):
+                logger.critical(
+                    f"[FoundryDocPipeline] PII circuit breaker triggered: "
+                    f"{self._pii_consecutive_failures} consecutive PII failures. "
+                    f"Halting to prevent unredacted PII from being indexed."
+                )
+                self.adls.move_to_failed(blob_path, f"PII circuit breaker: {e}")
+                return {"status": "error", "stage": "pii_circuit_breaker", "error": str(e)}
+
+            from .config import settings as _pipe_cfg
+            if self.pii_scanner.enabled and _pipe_cfg.PII_FAIL_POLICY == "halt":
+                logger.warning(
+                    f"[FoundryDocPipeline] PII_FAIL_POLICY=halt — skipping {file_name} "
+                    f"to avoid indexing unredacted content"
+                )
+                self.adls.move_to_failed(blob_path, f"PII scan failed (halt policy): {e}")
+                return {"status": "error", "stage": "pii_scan", "error": str(e)}
+            logger.warning("[FoundryDocPipeline] PII_FAIL_POLICY=proceed — indexing without PII redaction")
 
         # 5. Generate embeddings
         try:
@@ -123,8 +151,11 @@ class FoundryDocPipeline:
             self.adls.move_to_failed(blob_path, f"Embedding error: {e}")
             return {"status": "error", "stage": "embed", "error": str(e)}
 
-        # 6. Push to Azure AI Search
+        # 6. Push to Azure AI Search (delete old chunks first for idempotent re-ingestion)
         try:
+            deleted = self.pusher.delete_document_chunks(blob_path)
+            if deleted:
+                logger.info(f"[FoundryDocPipeline] Cleaned {deleted} orphan chunks for {blob_path}")
             result = self.pusher.push(chunks)
             logger.info(
                 f"[FoundryDocPipeline] [6/6] Pushed: {result['success']} succeeded, {result['failed']} failed"
@@ -149,10 +180,13 @@ class FoundryDocPipeline:
 
 
 def _infer_source_type(blob_path: str) -> str:
-    """Infer source type from blob path prefix."""
+    """Infer source type from blob path prefix using configurable patterns."""
+    from .config import settings as _cfg
     path_lower = blob_path.lower()
-    if "sharepoint" in path_lower:
-        return "sharepoint"
-    if "wiki" in path_lower or "nfcu-va-wiki" in path_lower:
-        return "wiki"
+    for pattern in _cfg.SOURCE_TYPE_SHAREPOINT_PATTERNS.split(","):
+        if pattern.strip() and pattern.strip().lower() in path_lower:
+            return "sharepoint"
+    for pattern in _cfg.SOURCE_TYPE_WIKI_PATTERNS.split(","):
+        if pattern.strip() and pattern.strip().lower() in path_lower:
+            return "wiki"
     return "unknown"

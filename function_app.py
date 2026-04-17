@@ -40,15 +40,9 @@ app = func.FunctionApp()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=getattr(logging, _cfg.LOG_LEVEL))
 
-# Auto-create search index on cold start
-try:
-    from ingestion.search_pusher import SearchPusher
-
-    _search_pusher = SearchPusher()
-    logger.info(f"[Startup] Search index ensured: {_search_pusher.index_name}")
-except Exception as e:
-    logger.error(f"[Startup] Failed to ensure search index: {e}")
-    _search_pusher = None
+# Search index is created lazily by FoundryDocPipeline.pusher on first use.
+# No module-level SearchPusher — avoids blocking cold start if Search is down,
+# and avoids duplicate credential/index creation (pipeline creates its own).
 
 # Lazy-loaded pipeline with thread-safe double-checked locking
 _pipeline = None
@@ -163,9 +157,8 @@ def process_queue_document(msg: func.QueueMessage):
             logger.info(f"[Queue] Result: {json.dumps(result)}")
 
     except Exception as e:
-        logger.error(f"[Queue] Error processing queue message (fail-fast, no retry): {e}")
-        # Fail-fast: log and swallow — maxDequeueCount=1 prevents infinite retries.
-        # Failed messages go straight to poison queue for manual review.
+        logger.error(f"[Queue] Error processing queue message: {e}")
+        raise
 
 
 @app.function_name("process_blob_document")

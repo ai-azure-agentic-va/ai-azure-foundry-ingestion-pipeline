@@ -103,17 +103,11 @@ class FoundryParser:
             with self._client_lock:
                 if self._client is None:
                     from azure.ai.contentunderstanding import ContentUnderstandingClient
-                    from azure.core.credentials import AzureKeyCredential
                     from azure.identity import DefaultAzureCredential
-
-                    from ingestion.config import settings as _settings
-
-                    api_key = _settings.FOUNDRY_API_KEY
-                    credential = AzureKeyCredential(api_key) if api_key else DefaultAzureCredential()
 
                     self._client = ContentUnderstandingClient(
                         endpoint=self.endpoint,
-                        credential=credential,
+                        credential=DefaultAzureCredential(),
                     )
                     logger.info("[FoundryParser] ContentUnderstandingClient initialized")
         return self._client
@@ -169,7 +163,26 @@ class FoundryParser:
             if isinstance(content, DocumentContent):
                 if content.pages:
                     for page in content.pages:
-                        pages.append({"page_number": page.page_number, "text": ""})
+                        page_text = ""
+                        if hasattr(page, "spans") and page.spans and full_text:
+                            parts = []
+                            for span in page.spans:
+                                offset = getattr(span, "offset", 0)
+                                length = getattr(span, "length", 0)
+                                if length > 0:
+                                    parts.append(full_text[offset:offset + length])
+                            page_text = "".join(parts)
+                        pages.append({"page_number": page.page_number, "text": page_text})
+
+                    # If spans didn't populate text, split markdown proportionally
+                    if pages and not any(p["text"].strip() for p in pages):
+                        n = len(pages)
+                        chunk_size = max(1, len(full_text) // n)
+                        for i, p in enumerate(pages):
+                            start = i * chunk_size
+                            end = (i + 1) * chunk_size if i < n - 1 else len(full_text)
+                            p["text"] = full_text[start:end]
+
                 if content.tables:
                     table_count = len(content.tables)
                 if hasattr(content, "figures") and content.figures:

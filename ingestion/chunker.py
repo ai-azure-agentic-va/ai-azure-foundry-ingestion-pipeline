@@ -260,6 +260,17 @@ def _make_breadcrumb(file_path: str) -> str:
     return " > ".join(parts) if parts else file_path
 
 
+_PAGE_NUM_RE = re.compile(r"^\[Page\s+(\d+)\]")
+
+
+def _extract_page_number(chunk_content: str, metadata_page: int | None) -> int | None:
+    """Extract page number from chunk content prefix, or use metadata fallback."""
+    if metadata_page:
+        return metadata_page
+    m = _PAGE_NUM_RE.search(chunk_content)
+    return int(m.group(1)) if m else None
+
+
 def _build_chunk_dict(metadata: dict, index: int, chunk_content: str, total: int) -> dict:
     return {
         "id": _make_chunk_id(metadata.get("file_path", "unknown"), index),
@@ -270,9 +281,9 @@ def _build_chunk_dict(metadata: dict, index: int, chunk_content: str, total: int
         "source_url": metadata.get("source_url", ""),
         "source_type": metadata.get("source_type", ""),
         "file_name": metadata.get("file_name", ""),
-        "page_number": metadata.get("page_number"),
+        "page_number": _extract_page_number(chunk_content, metadata.get("page_number")),
         "last_modified": metadata.get("last_modified"),
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "ingested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pii_redacted": False,
         "breadcrumb": _make_breadcrumb(metadata.get("file_path", "")),
     }

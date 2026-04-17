@@ -218,8 +218,7 @@ All environment variables are centralized in `ingestion/config.py`. No other fil
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `FOUNDRY_ENDPOINT` | Azure AI Foundry endpoint URL | *required* |
-| `FOUNDRY_API_KEY` | Foundry API key (falls back to Managed Identity if unset) | `None` |
-| `FOUNDRY_API_VERSION` | API version | `2024-12-01-preview` |
+| `FOUNDRY_API_VERSION` | API version | `2024-06-01` |
 | `FOUNDRY_ANALYZER_ID` | Content Understanding analyzer | `prebuilt-documentSearch` |
 
 ### Embeddings
@@ -236,7 +235,7 @@ All environment variables are centralized in `ingestion/config.py`. No other fil
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SEARCH_ENDPOINT` | Azure AI Search endpoint | *required* |
-| `SEARCH_INDEX_NAME` | Target index name | `nfcu-rag-index` |
+| `SEARCH_INDEX_NAME` | Target index name | `rag-index` |
 
 ### ADLS / Storage
 
@@ -253,7 +252,6 @@ All environment variables are centralized in `ingestion/config.py`. No other fil
 | `PII_ENABLED` | Enable/disable PII scanning | `true` |
 | `PII_CONFIDENCE_THRESHOLD` | Minimum confidence for redaction (0.0–1.0) | `0.8` |
 | `FOUNDRY_PII_ENDPOINT` | PII service endpoint (falls back to `FOUNDRY_ENDPOINT`) | `None` |
-| `FOUNDRY_PII_KEY` | PII service key (falls back to `FOUNDRY_API_KEY`) | `None` |
 | `PII_DOMAIN_ALLOWLIST` | Comma-separated domains to exclude from PII redaction | `""` |
 
 ### Chunking
