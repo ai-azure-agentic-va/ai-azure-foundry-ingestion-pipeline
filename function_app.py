@@ -56,8 +56,8 @@ def _extract_blob_info(data: dict) -> tuple[str, str, str, int] | None:
         logger.error(f"[Trigger] Cannot parse blob path from URL: {blob_url}")
         return None
 
-    if blob_path.endswith(".metadata.json") or blob_path.endswith(".error.json"):
-        logger.debug(f"[Trigger] Skipping metadata file: {blob_path}")
+    if blob_path.endswith(".error.json"):
+        logger.debug(f"[Trigger] Skipping error file: {blob_path}")
         return None
 
     if content_length == 0:
@@ -87,19 +87,11 @@ def process_new_document(event: func.EventGridEvent):
     container, blob_path, content_type, content_length = info
     logger.info(f"[EventGrid] Processing: {blob_path} ({content_length} bytes, {content_type})")
 
-    metadata = {
-        "source_url": data.get("url", ""),
-        "content_type": content_type,
-        "file_size_bytes": content_length,
-    }
-
-    try:
-        pipeline = _get_pipeline()
-        result = pipeline.process_document(container, blob_path, metadata)
-        logger.info(f"[EventGrid] Result: {json.dumps(result)}")
-    except Exception as e:
-        logger.error(f"[EventGrid] Unhandled error processing {blob_path}: {e}")
-        raise
+    pipeline = _get_pipeline()
+    result = pipeline.process_document(container, blob_path)
+    logger.info(f"[EventGrid] Result: {json.dumps(result)}")
+    if result.get("status") == "error":
+        logger.error(f"[EventGrid] Pipeline failed at stage={result.get('stage')}: {blob_path}")
 
 
 @app.function_name("process_queue_document")
@@ -109,33 +101,24 @@ def process_new_document(event: func.EventGridEvent):
     connection="ADLS_QUEUE_CONNECTION",
 )
 def process_queue_document(msg: func.QueueMessage):
-    try:
-        body = msg.get_body().decode("utf-8")
-        event_payload = json.loads(body)
-        events = event_payload if isinstance(event_payload, list) else [event_payload]
+    body = msg.get_body().decode("utf-8")
+    event_payload = json.loads(body)
+    events = event_payload if isinstance(event_payload, list) else [event_payload]
 
-        for event in events:
-            data = event.get("data", event)
-            info = _extract_blob_info(data)
-            if info is None:
-                continue
+    for event in events:
+        data = event.get("data", event)
+        info = _extract_blob_info(data)
+        if info is None:
+            continue
 
-            container, blob_path, content_type, content_length = info
-            logger.info(f"[Queue] Processing: {blob_path} ({content_length} bytes, {content_type})")
+        container, blob_path, content_type, content_length = info
+        logger.info(f"[Queue] Processing: {blob_path} ({content_length} bytes, {content_type})")
 
-            metadata = {
-                "source_url": data.get("url", ""),
-                "content_type": content_type,
-                "file_size_bytes": content_length,
-            }
-
-            pipeline = _get_pipeline()
-            result = pipeline.process_document(container, blob_path, metadata)
-            logger.info(f"[Queue] Result: {json.dumps(result)}")
-
-    except Exception as e:
-        logger.error(f"[Queue] Error processing queue message: {e}")
-        raise
+        pipeline = _get_pipeline()
+        result = pipeline.process_document(container, blob_path)
+        logger.info(f"[Queue] Result: {json.dumps(result)}")
+        if result.get("status") == "error":
+            logger.error(f"[Queue] Pipeline failed at stage={result.get('stage')}: {blob_path}")
 
 
 @app.function_name("process_blob_document")
@@ -156,8 +139,8 @@ def process_blob_document(blob: func.InputStream):
 
     logger.info(f"[BlobTrigger] Detected blob: {blob_name} ({content_length} bytes)")
 
-    if blob_name.endswith(".metadata.json") or blob_name.endswith(".error.json"):
-        logger.debug(f"[BlobTrigger] Skipping metadata file: {blob_name}")
+    if blob_name.endswith(".error.json"):
+        logger.debug(f"[BlobTrigger] Skipping error file: {blob_name}")
         return
 
     if content_length == 0:
@@ -176,19 +159,11 @@ def process_blob_document(blob: func.InputStream):
 
     logger.info(f"[BlobTrigger] Processing: {blob_path} ({content_length} bytes)")
 
-    metadata = {
-        "source_url": f"https://{_cfg.ADLS_ACCOUNT_NAME}.blob.core.windows.net/{container}/{blob_path}",
-        "content_type": content_type,
-        "file_size_bytes": content_length,
-    }
-
-    try:
-        pipeline = _get_pipeline()
-        result = pipeline.process_document(container, blob_path, metadata)
-        logger.info(f"[BlobTrigger] Result: {json.dumps(result)}")
-    except Exception as e:
-        logger.error(f"[BlobTrigger] Unhandled error processing {blob_path}: {e}")
-        raise
+    pipeline = _get_pipeline()
+    result = pipeline.process_document(container, blob_path)
+    logger.info(f"[BlobTrigger] Result: {json.dumps(result)}")
+    if result.get("status") == "error":
+        logger.error(f"[BlobTrigger] Pipeline failed at stage={result.get('stage')}: {blob_path}")
 
 
 @app.function_name("health_check")

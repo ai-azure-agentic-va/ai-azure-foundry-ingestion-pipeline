@@ -55,14 +55,9 @@ class FoundryDocPipeline:
         for key, value in blob_meta.items():
             if value:
                 metadata[key] = value
-        sidecar = self.adls.read_metadata_sidecar(container, blob_path)
-        for key, value in sidecar.items():
-            if value:
-                metadata[key] = value
 
         metadata.setdefault("file_name", file_name)
         metadata.setdefault("file_path", blob_path)
-        metadata.setdefault("source_type", _infer_source_type(blob_path))
 
         if not metadata.get("source_type"):
             logger.warning(f"[FoundryDocPipeline] Missing source_type for {file_name} — skipping")
@@ -176,13 +171,3 @@ class FoundryDocPipeline:
         }
 
 
-def _infer_source_type(blob_path: str) -> str:
-    from .config import settings as _cfg
-    path_lower = blob_path.lower()
-    for pattern in _cfg.SOURCE_TYPE_SHAREPOINT_PATTERNS.split(","):
-        if pattern.strip() and pattern.strip().lower() in path_lower:
-            return "sharepoint"
-    for pattern in _cfg.SOURCE_TYPE_WIKI_PATTERNS.split(","):
-        if pattern.strip() and pattern.strip().lower() in path_lower:
-            return "wiki"
-    return "unknown"

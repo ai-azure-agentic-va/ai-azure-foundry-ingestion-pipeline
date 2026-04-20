@@ -66,20 +66,6 @@ class AdlsReader:
             logger.warning(f"[AdlsReader] Error reading blob metadata for {blob_path}: {e}")
             return {}
 
-    def read_metadata_sidecar(self, container: str, blob_path: str) -> dict:
-        from azure.core.exceptions import ResourceNotFoundError
-
-        metadata_path = f"{blob_path}.metadata.json"
-        try:
-            data = self.read_blob(container, metadata_path)
-            return json.loads(data)
-        except ResourceNotFoundError:
-            logger.debug(f"[AdlsReader] No metadata sidecar for {blob_path}")
-            return {}
-        except Exception as e:
-            logger.warning(f"[AdlsReader] Error reading metadata sidecar for {blob_path}: {e}")
-            return {}
-
     def move_to_failed(self, blob_path: str, error_message: str):
         try:
             source_client = self.blob_service.get_blob_client(

@@ -48,10 +48,6 @@ class Settings:
         self.SEARCH_SEMANTIC_CONFIG_NAME: str = os.environ.get("SEARCH_SEMANTIC_CONFIG_NAME", "custom-kb-semantic-config")
         self.SEARCH_PUSH_BATCH_SIZE: int = int(os.environ.get("SEARCH_PUSH_BATCH_SIZE", "100"))
 
-        # Source type inference patterns (comma-separated substrings)
-        self.SOURCE_TYPE_WIKI_PATTERNS: str = os.environ.get("SOURCE_TYPE_WIKI_PATTERNS", "wiki")
-        self.SOURCE_TYPE_SHAREPOINT_PATTERNS: str = os.environ.get("SOURCE_TYPE_SHAREPOINT_PATTERNS", "sharepoint")
-
         # Chunking
         self.CHUNK_SIZE_TOKENS: int = int(os.environ.get("CHUNK_SIZE_TOKENS", "2000"))
         self.CHUNK_OVERLAP_TOKENS: int = int(os.environ.get("CHUNK_OVERLAP_TOKENS", "100"))
