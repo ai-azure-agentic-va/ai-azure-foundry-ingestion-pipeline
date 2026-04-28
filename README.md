@@ -1,230 +1,171 @@
-# AI Foundry Document Ingestion Pipeline
+# AI Foundry Ingestion Pipeline
 
-A production-grade, serverless document ingestion pipeline built on **Azure AI Foundry** and **Azure Functions**. Upload any document (PDF, DOCX, XLSX, PPTX, Markdown, or plain text) to ADLS Gen2 blob storage -- within 30 seconds it's automatically parsed, chunked, PII-redacted, embedded, and indexed into **Azure AI Search** for hybrid retrieval (keyword + vector + semantic reranking).
-
-Built for teams that need a **RAG-ready knowledge base** without managing indexers, skillsets, or orchestration infrastructure. The pipeline is push-only (no pull indexers), fully event-driven, and runs on consumption-plan Functions with zero idle cost.
-
-### Why This Exists
-
-Azure AI Search has built-in indexers and skillsets, but they come with limitations: rigid scheduling, limited file-type support, no control over chunking strategy, and no straightforward way to plug in custom PII redaction before indexing. This pipeline replaces all of that with a simple, transparent, code-first approach:
-
-- **You control every stage.** Chunking strategy, PII categories, embedding model, batch sizes -- it's all in Python, not hidden behind portal config.
-- **Two processing paths.** AI Foundry Services for production quality, or custom open-source libraries (PyMuPDF, Presidio, spaCy) for bulk loading at a fraction of the cost.
-- **One deploy command.** `./deploy.sh` creates the Function App, assigns RBAC, pushes settings, and publishes code.
-
-Drop a document into blob storage. 30 seconds later, it's searchable with all PII redacted.
+An Azure Functions pipeline that ingests documents from ADLS Gen2, parses them using Azure AI Content Understanding (with automatic fallback to custom parsers), chunks text, scans for PII, generates embeddings, and pushes vectors to Azure AI Search for RAG retrieval.
 
 ---
 
-## How It Works
+## End-to-End Flow
 
 ```
-  YOU UPLOAD A DOCUMENT                    6-STAGE PIPELINE                              SEARCHABLE
-  ========================    ============================================    ========================
-
-                              +----------+    +----------+    +----------+
-                              |  1.READ  | -> |  2.PARSE | -> | 3.CHUNK  |
-                              | Download |    | Extract  |    | Split    |
-  +------------------------+  | from     |    | text,    |    | into     |    +----------------------+
-  | ADLS Gen2              |  | ADLS     |    | tables,  |    | 1024-    |    | Azure AI Search      |
-  | (Blob Storage)         |  +----------+    | images   |    | token    |    | (custom-kb-index)    |
-  |                        |                  +----------+    | segments |    |                      |
-  | raw-documents/         |                                  +----------+    | Hybrid Search:       |
-  |   reports/q4.pdf       |                                                  |  - Keyword (BM25)    |
-  |   wiki/onboarding.docx |  +----------+    +----------+    +----------+    |  - Vector (cosine)   |
-  |   data/export.xlsx     |  | 4.PII    | -> | 5.EMBED  | -> | 6.INDEX  |    |  - Semantic rerank   |
-  |   notes/design.md      |  | Detect & |    | Generate |    | Push to  |    |                      |
-  +------------------------+  | redact   |    | 1536-dim |    | AI Search| -> | Answers in < 1 sec   |
-         |                    | SSN,name |    | vectors  |    | (upsert) |    +----------------------+
-         |                    | email,IP |    |          |    |          |
-         | Blob trigger       +----------+    +----------+    +----------+
-         | (auto-fires on     Azure Language   Foundry LLM    merge_or_upload
-         |  new blob)         PII service     text-embedding  batch=100
-         |                                    -3-small
-         v
-  Azure Function App
-  (processes the document)
-```
-
-**The pipeline is fully automatic.** Upload a file. Walk away. It's indexed.
-
----
-
-## What Each Stage Does
-
-| Stage | What Happens | How |
-|-------|-------------|-----|
-| **1. Read** | Downloads the raw document bytes from ADLS Gen2 | `azure-storage-blob` SDK, Managed Identity |
-| **2. Parse** | Extracts text, tables, images, layout into structured markdown | **AI Foundry**: Content Understanding (single API call) / **Custom**: PyMuPDF, python-docx, openpyxl, python-pptx |
-| **3. Chunk** | Splits the extracted text into 1024-token overlapping segments | `tiktoken` (cl100k_base) + `langchain` splitters, 200-token overlap |
-| **4. PII Redact** | Detects and replaces sensitive data: names, SSN, email, phone, IP, credit cards, addresses | **AI Foundry**: Azure Language PII (50+ entity types) / **Custom**: Presidio + spaCy (local, no API calls) |
-| **5. Embed** | Generates 1536-dimensional vector for each chunk | Azure OpenAI `text-embedding-3-small` via Foundry endpoint |
-| **6. Index** | Pushes chunks to Azure AI Search with idempotent upserts | `merge_or_upload_documents`, batches of 100 |
-
-### PII Redaction Example
-
-```
-BEFORE:  "John Smith (SSN: 123-45-6789) reviewed the architecture at john@example.com"
-AFTER:   "[NAME REDACTED] (SSN: [SSN REDACTED]) reviewed the architecture at [EMAIL REDACTED]"
-```
-
-### Supported File Types
-
-| Category | Extensions | Parser |
-|----------|-----------|--------|
-| Documents | `.pdf` `.docx` `.doc` | Content Understanding / PyMuPDF, python-docx |
-| Spreadsheets | `.xlsx` `.xls` `.csv` | Content Understanding / openpyxl |
-| Presentations | `.pptx` `.ppt` | Content Understanding / python-pptx |
-| Text | `.md` `.txt` `.json` `.xml` `.html` `.log` | Direct read (skips Content Understanding) |
-
----
-
-## Two Processing Paths
-
-Both paths run the same 6-stage pipeline. They differ only in **Stage 2 (Parse)** and **Stage 4 (PII)**:
-
-| | AI Foundry Processing | Custom Processing |
-|---|---|---|
-| **When to use** | Production (best quality) | Bulk loading (cheapest) |
-| **Parse** | Content Understanding (single API call) | PyMuPDF + python-docx + openpyxl + python-pptx |
-| **PII** | Azure Language PII (cloud, 50+ entity types) | Presidio + spaCy (local, zero API calls) |
-| **Deploy size** | 68 MB | 166 MB |
-| **Monthly cost** | ~$110-190 | ~$6-35 |
-| **Cost driver** | Content Understanding + Language PII API calls | Embeddings only (parsing & PII are free/local) |
-
-Both paths share the same: ADLS reader, chunker, embedder, search pusher, AI Search index, and trigger infrastructure.
-
----
-
-## Quick Start
-
-### 1. Prerequisites
-
-These Azure resources must exist before deploying:
-
-| Resource | What It Is |
-|----------|-----------|
-| **ADLS Gen2 Storage Account** | Where documents land (HNS enabled) |
-| **3 Blob Containers** | `raw-documents` (ingest), `raw-documents-failed` (dead letter), `processing-state` (watermarks) |
-| **Azure AI Search** | The search service with `custom-kb-index` |
-| **Azure AI Foundry** | For Content Understanding, Language PII, and Embeddings |
-
-### 2. Configure
-
-```bash
-cd ai-foundry-processing
-cp .env.example .env
-# Edit .env -- fill in your Azure resource endpoints (auth uses Managed Identity)
-```
-
-### 3. Deploy
-
-**Linux / Mac:**
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
-
-**Windows (PowerShell):**
-```powershell
-.\deploy.ps1
-```
-
-The deploy script:
-1. Creates the Function App + storage account
-2. Enables Managed Identity + assigns RBAC roles
-3. Pushes all app settings from `.env`
-4. Publishes the function code
-5. Restarts and verifies
-
-### 4. Test
-
-```bash
-# Upload a test document
-echo "John Smith (SSN: 123-45-6789) reviewed the architecture." > /tmp/test.md
-
-az storage blob upload \
-  --account-name <your-storage-account> \
-  --container-name raw-documents \
-  --name test-docs/test.md \
-  --file /tmp/test.md --auth-mode login
-
-# Wait ~30 seconds, then query AI Search
-curl -s "https://<your-search-service>.search.windows.net/indexes/custom-kb-index/docs/search?api-version=2024-07-01" \
-  -H "Content-Type: application/json" -H "api-key: <your-search-key>" \
-  -d '{"search": "architecture", "top": 5, "select": "chunk_content,pii_redacted,file_name"}'
-
-# Expected: PII redacted, document searchable
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           DOCUMENT INGESTION PIPELINE                        │
+│                                                                              │
+│   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌──────┐   ┌───────┐   ┌────┐ │
+│   │  1.READ  │──▶│ 2.PARSE │──▶│ 3.CHUNK │──▶│4.PII │──▶│5.EMBED│──▶│6.  │ │
+│   │  (ADLS)  │   │         │   │         │   │ SCAN │   │       │   │PUSH│ │
+│   └─────────┘   └────┬────┘   └─────────┘   └──────┘   └───────┘   └────┘ │
+│                       │                                                      │
+│              ┌────────┴─────────┐                                            │
+│              ▼                  ▼                                             │
+│   ┌──────────────────┐  ┌─────────────────┐                                  │
+│   │ Content           │  │ Fallback         │                                 │
+│   │ Understanding     │  │ (Custom Parsers) │                                 │
+│   │ (Azure AI)        │  │ (Local Python)   │                                 │
+│   └──────────────────┘  └─────────────────┘                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## AI Search Index Schema
+## Triggers
 
-Every chunk pushed to `custom-kb-index` has these fields:
+The pipeline supports three trigger modes (controlled by `TRIGGER_MODE` env var):
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `id` | `Edm.String` (key) | Deterministic: base64 of `{file_path}_{chunk_index}` |
-| `chunk_content` | `Edm.String` | The text content (PII-redacted if applicable) |
-| `content_vector` | `Collection(Edm.Single)` | 1536-dim embedding (HNSW, cosine similarity) |
-| `document_title` | `Edm.String` | Original file name |
-| `source_url` | `Edm.String` | Blob storage URL |
-| `source_type` | `Edm.String` | `sharepoint`, `wiki`, or `unknown` |
-| `file_name` | `Edm.String` | File name (filterable) |
-| `chunk_index` | `Edm.Int32` | Position within document (0-based) |
-| `total_chunks` | `Edm.Int32` | Total chunks for this document |
-| `page_number` | `Edm.Int32` | Source page (PDFs/PPTX) |
-| `last_modified` | `Edm.DateTimeOffset` | Source last-modified timestamp |
-| `ingested_at` | `Edm.DateTimeOffset` | When this chunk was indexed |
-| `pii_redacted` | `Edm.Boolean` | `true` if PII was found and redacted |
+| Mode | How It Works |
+|------|-------------|
+| `EVENTGRID_DIRECT` | Blob created in ADLS → Event Grid fires directly to the Function |
+| `EVENTGRID_QUEUE` | Blob created → Event Grid → Storage Queue → Function (recommended for reliability) |
+| `BLOB` | Function polls ADLS container directly (simplest setup, slightly slower) |
 
-**Search capabilities:**
-- **Keyword search** (BM25) on `chunk_content`
-- **Vector search** (HNSW cosine) on `content_vector` -- `retrievable: true`
-- **Semantic reranking** via `custom-kb-semantic-config`
-- **Hybrid** = all three combined for best relevance
+All three triggers extract the blob path and call the same `pipeline.process_document()` method. There's also an HTTP health check at `GET /api/health`.
 
 ---
 
-## Trigger Modes
+## Pipeline Stages (Detailed)
 
-The Function App supports 3 trigger modes. Set via `TRIGGER_MODE` env var:
+### Stage 1: Read (`ingestion/reader.py`)
 
-| Mode | How It Works | When to Use |
-|------|-------------|-------------|
-| **`BLOB`** (default) | Function polls the blob container directly | Development, simple setups. No extra infrastructure. |
-| **`EVENTGRID_QUEUE`** | Event Grid catches blob events -> pushes to Queue -> Function reads Queue | Production. Best retry semantics, dead-letter support. |
-| **`EVENTGRID_DIRECT`** | Event Grid fires directly to the Function | Lowest latency. No retry queue. |
+Downloads the raw document bytes from ADLS Gen2. Also reads:
+- **Blob metadata** — custom properties set on the blob (e.g., `source_url`, `source_type`)
+- **Sidecar `.metadata.json`** — optional JSON file next to the blob with additional metadata
 
-Switch modes by setting the env var and redeploying:
+Metadata is merged in priority order: sidecar > blob metadata > trigger defaults.
 
-```bash
-# Default (BLOB) -- simplest
-./deploy.sh
+If the blob path contains `sharepoint`, the source type is inferred as `sharepoint`. If it contains `wiki`, it's `wiki`. Otherwise `unknown`.
 
-# Production (Event Grid + Queue)
-TRIGGER_MODE=EVENTGRID_QUEUE ./deploy.sh
+### Stage 2: Parse (`parsing/`)
 
-# Low latency (Event Grid direct)
-TRIGGER_MODE=EVENTGRID_DIRECT ./deploy.sh
+This is where the two-path strategy lives:
+
+```
+                    ┌─────────────────────┐
+                    │  File arrives for    │
+                    │  parsing             │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │  Check extension     │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                                 │
+     Binary formats                    Text-based formats
+     .pdf .docx .pptx                  .md .txt .csv .json
+     .jpg .png .tiff                   .xml .xlsx .xls .xlsm
+              │                                 │
+              ▼                                 │
+   ┌─────────────────────┐                      │
+   │ Azure AI Content     │                      │
+   │ Understanding (CU)   │                      │
+   │                      │                      │
+   │ Single API call:     │                      │
+   │ - Text extraction    │                      │
+   │ - Table detection    │                      │
+   │ - Figure verbalize   │                      │
+   │ - Structured markdown│                      │
+   └──────────┬──────────┘                      │
+              │                                 │
+     ┌────────┼────────┐                        │
+     │                 │                        │
+  Success           Failure                     │
+     │            (CU error,                    │
+     │             empty result,                │
+     │             service down)                │
+     │                 │                        │
+     │                 ▼                        ▼
+     │        ┌──────────────────────────────────┐
+     │        │       Fallback Parser Factory     │
+     │        │                                   │
+     │        │  Extension → Parser mapping:      │
+     │        │  .pdf      → PdfParser (PyMuPDF)  │
+     │        │  .docx     → DocxParser           │
+     │        │  .pptx     → PptxParser           │
+     │        │  .xlsx/xls → XlsxParser (openpyxl)│
+     │        │  .md       → MarkdownParser       │
+     │        │  .txt/csv  → TextParser           │
+     │        │  unknown   → UTF-8 decode attempt │
+     │        └──────────────────────────────────┘
+     │                 │
+     ▼                 ▼
+   ┌───────────────────────┐
+   │   ParseResult          │
+   │   - full_text (str)    │
+   │   - pages (list)       │
+   │   - page_count (int)   │
+   │   - metadata (dict)    │
+   └───────────────────────┘
 ```
 
----
+**Why the split?**
+- **Binary formats** (PDF, DOCX, PPTX, images) benefit from CU — it extracts text, tables, and figures in one call, producing structured markdown optimized for RAG.
+- **Text-based formats** (.md, .xlsx, .txt, .csv, .json, .xml) gain nothing from CU — they're already text or need specialized parsing (e.g., openpyxl for Excel sheets). Sending them through CU wastes time and money.
+- **Automatic fallback** ensures the pipeline never fails just because CU is down or returns empty results.
 
-## Error Handling
+### Stage 3: Chunk (`ingestion/chunker.py`)
 
-| Failure | What Happens |
-|---------|-------------|
-| Parse fails | Document moved to `raw-documents-failed` container with `.error.json` sidecar |
-| Chunk fails | Same -- moved to failed container |
-| PII scan fails | **Continues without redaction** (logged as warning, not fatal) |
-| Embedding fails | Document moved to failed container |
-| Search push fails | Document moved to failed container |
-| Rate limited (embeddings) | Exponential backoff with jitter, up to 5 retries |
-| Text > 5120 chars (PII) | Auto-splits into sub-chunks, scans each, reassembles |
-| Zero-byte file uploaded | Silently skipped |
-| Metadata sidecar file | Silently skipped (`.metadata.json`, `.error.json`) |
+Splits the parsed text into token-sized chunks using tiktoken (cl100k_base encoding). The chunking strategy is chosen automatically based on file type:
+
+| File Type | Strategy | How It Works |
+|-----------|----------|-------------|
+| `.pdf` | **Semantic** | Splits by page boundaries, then by tokens within each page |
+| `.md` | **Header-based** | Uses pre-parsed markdown sections (from mistune AST), then splits large sections by tokens |
+| `.xlsx` | **Sheet-based** | Splits by Excel sheet name, then by rows within each sheet |
+| `.pptx` | **Semantic** | Splits by slide, then by tokens |
+| Everything else | **Recursive** | Token-based splitting with separators: `\n\n` → `\n` → `. ` → ` ` |
+
+Each strategy is configurable via env vars (`CHUNK_STRATEGY_PDF`, `CHUNK_STRATEGY_MD`, etc.).
+
+Default chunk size: **1024 tokens** with **200 token overlap**.
+
+Every chunk gets a unique ID (`base64(file_path + chunk_index)`), a title, and metadata from the parsed document.
+
+### Stage 4: PII Scan (`ingestion/pii_scanner.py`)
+
+Detects and redacts personally identifiable information using Azure AI Language service.
+
+- Sends chunks in **batches of 25** (Azure's per-request limit) for efficiency
+- Redacts: SSN, credit card numbers, phone numbers, emails, addresses, etc.
+- Configurable **confidence threshold** (default 0.8) — only entities above this score are redacted
+- Configurable **domain allowlist** — exclude known-safe domains (e.g., company emails) from redaction
+- **Non-fatal** — if PII scanning fails, the pipeline continues without redaction (logs a warning)
+- Handles long text by splitting at **word boundaries** (not arbitrary char positions) to avoid bisecting PII entities
+
+### Stage 5: Embed (`ingestion/embedder.py`)
+
+Generates vector embeddings using Azure OpenAI via the Foundry endpoint.
+
+- Model: `text-embedding-3-large` (3072 dimensions)
+- Processes chunks in **configurable batches** (default 16)
+- Retries on rate limits (`RateLimitError`), transient network errors (`APIConnectionError`), and timeouts (`APITimeoutError`) with exponential backoff
+
+### Stage 6: Push (`ingestion/search_pusher.py`)
+
+Upserts chunks to Azure AI Search using `merge_or_upload` (idempotent — safe to re-run).
+
+- Batch size: **1000 documents per request** (Azure's maximum)
+- Auto-creates the search index on startup if it doesn't exist
+- Index schema includes: vector field (3072d HNSW), text content, metadata fields, and an integrated vectorizer for auto-vectorized queries
+- Returns success/failed counts per batch
 
 ---
 
@@ -232,66 +173,143 @@ TRIGGER_MODE=EVENTGRID_DIRECT ./deploy.sh
 
 ```
 ai-azure-foundry-ingestion-pipeline/
-  README.md                              # This file
-  .gitignore                             # Excludes .env, local.settings.json, __pycache__, .venv
-
-  ai-foundry-processing/                 # AI Foundry Services path (production primary)
-    deploy.sh / deploy.ps1               # One-command deploy (Linux/Mac/Windows)
-    .env.example                         # Template -- copy to .env and fill in values
-    function_app.py                      # 4 triggers: EventGrid, Queue, Blob, HTTP health
-    host.json                            # Timeout (10min), queue + blob config
-    requirements.txt                     # azure-ai-*, openai, langchain, tiktoken
-    modules/
-      pipeline.py                        # FoundryDocPipeline -- orchestrates the 6 stages
-      adls_reader.py                     # Stage 1: Read from ADLS Gen2
-      foundry_parser.py                  # Stage 2: Content Understanding (CU)
-      chunker.py                         # Stage 3: tiktoken + langchain splitters
-      foundry_pii_scanner.py             # Stage 4: Azure Language PII
-      embedder.py                        # Stage 5: text-embedding-3-small via Foundry
-      search_pusher.py                   # Stage 6: Push to AI Search (merge_or_upload)
-      parsers/                           # Fallback parsers (for .md/.txt and CU failures)
-        base.py                          # ParseResult dataclass + BaseParser ABC
-        parser_factory.py                # Routes file extension -> parser
-        pdf_parser.py                    # PyMuPDF
-        docx_parser.py                   # python-docx
-        xlsx_parser.py                   # openpyxl
-        pptx_parser.py                   # python-pptx
-        markdown_parser.py               # UTF-8 decode
-        txt_parser.py                    # UTF-8/latin-1 decode
-    README.md                            # Deep-dive: architecture, RBAC, schema, costs
-
-  custom-processing/                     # Custom Libraries path (bulk loading, cheaper)
-    deploy.sh / deploy.ps1               # Same deploy structure
-    .env.example                         # Same template
-    function_app.py                      # Same 4 triggers
-    host.json                            # Same config
-    requirements.txt                     # PyMuPDF, Presidio, spaCy (larger)
-    modules/
-      pipeline.py                        # CustomDocPipeline -- same 6 stages, different parse/PII
-      adls_reader.py                     # Same Stage 1
-      chunker.py                         # Same Stage 3
-      pii_scanner.py                     # Stage 4: Presidio + spaCy (local)
-      embedder.py                        # Same Stage 5
-      search_pusher.py                   # Same Stage 6
-      parsers/                           # Primary parsers (not fallback here)
-    README.md                            # Custom path docs
+│
+├── function_app.py              # Azure Functions entry point (3 triggers + health check)
+├── host.json                    # Functions host config
+├── requirements.txt             # Python dependencies
+├── .env.example                 # All environment variables with descriptions
+├── local.settings.json          # Local dev settings
+├── deploy.sh / deploy.ps1       # Deployment scripts (infra + code)
+│
+├── ingestion/                   # Pipeline orchestration and stages
+│   ├── config.py                # Centralized settings — ONLY file that reads os.environ
+│   ├── exceptions.py            # IngestionError → ParseError, ChunkError, EmbeddingError, etc.
+│   ├── pipeline.py              # FoundryDocPipeline — orchestrates all 6 stages
+│   ├── reader.py                # ADLS Gen2 blob reader + metadata + sidecar
+│   ├── chunker.py               # ChunkerFactory + TokenChunker, MarkdownChunker, SheetChunker, SemanticChunker
+│   ├── embedder.py              # OpenAI embeddings with retry/backoff
+│   ├── pii_scanner.py           # Azure AI Language PII detection/redaction (batched)
+│   └── search_pusher.py         # Azure AI Search push (batched, auto-creates index)
+│
+├── parsing/                     # Document parsing (CU primary + fallback parsers)
+│   ├── content_understanding.py # Azure AI Content Understanding — primary parser
+│   ├── fallback.py              # ParserFactory — routes extensions to correct fallback
+│   ├── base.py                  # ParseResult dataclass + BaseParser abstract class
+│   ├── pdf.py                   # PyMuPDF — page-by-page text + metadata extraction
+│   ├── docx.py                  # python-docx — paragraph + table extraction
+│   ├── xlsx.py                  # openpyxl — sheet-by-sheet with headers
+│   ├── pptx.py                  # python-pptx — slide-by-slide with notes
+│   ├── markdown.py              # mistune AST — section-aware parsing with frontmatter
+│   └── txt.py                   # Plain text / CSV / JSON / XML (UTF-8 decode)
+│
+├── README.md
+├── LICENSE
+└── .gitignore
 ```
 
 ---
 
-## Security
+## Configuration
 
-- **No secrets in code.** All credentials via `.env` (gitignored) or Managed Identity.
-- **Managed Identity** for ADLS, Foundry, and Search (API key only for Search admin operations).
-- **RBAC roles** auto-assigned by deploy script: `Storage Blob Data Contributor`, `Cognitive Services User`, `Search Index Data Contributor`, `Storage Queue Data Contributor`.
-- **PII redaction** runs before embedding and indexing -- sensitive data never reaches the search index.
-- **HTTPS only** enforced on Function App.
+All environment variables are centralized in `ingestion/config.py`. No other file reads `os.environ`.
+
+### Azure AI Services
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FOUNDRY_ENDPOINT` | Azure AI Foundry endpoint URL | *required* |
+| `FOUNDRY_API_VERSION` | API version | `2024-06-01` |
+| `FOUNDRY_ANALYZER_ID` | Content Understanding analyzer | `prebuilt-documentSearch` |
+
+### Embeddings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FOUNDRY_EMBEDDING_DEPLOYMENT` | Embedding model deployment name | `text-embedding-3-large` |
+| `FOUNDRY_EMBEDDING_MODEL` | Embedding model name | `text-embedding-3-large` |
+| `FOUNDRY_EMBEDDING_DIMENSIONS` | Vector dimensions | `3072` |
+| `EMBEDDING_BATCH_SIZE` | Chunks per embedding API call | `16` |
+
+### Azure AI Search
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SEARCH_ENDPOINT` | Azure AI Search endpoint | *required* |
+| `SEARCH_INDEX_NAME` | Target index name | `rag-index` |
+
+### ADLS / Storage
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ADLS_ACCOUNT_NAME` | Storage account name | *required* |
+| `ADLS_CONTAINER_RAW` | Source container for raw documents | `raw-documents` |
+| `ADLS_CONTAINER_FAILED` | Container for failed documents | `failed-documents` |
+
+### PII Scanning
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PII_ENABLED` | Enable/disable PII scanning | `true` |
+| `PII_CONFIDENCE_THRESHOLD` | Minimum confidence for redaction (0.0–1.0) | `0.8` |
+| `FOUNDRY_PII_ENDPOINT` | PII service endpoint (falls back to `FOUNDRY_ENDPOINT`) | `None` |
+| `PII_DOMAIN_ALLOWLIST` | Comma-separated domains to exclude from PII redaction | `""` |
+
+### Chunking
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CHUNK_SIZE_TOKENS` | Target chunk size in tokens | `1024` |
+| `CHUNK_OVERLAP_TOKENS` | Overlap between consecutive chunks | `200` |
+| `CHUNK_STRATEGY_PDF` | Strategy for PDFs | `semantic` |
+| `CHUNK_STRATEGY_MD` | Strategy for Markdown | `header_based` |
+| `CHUNK_STRATEGY_XLSX` | Strategy for Excel | `sheet_based` |
+| `CHUNK_STRATEGY_PPTX` | Strategy for PowerPoint | `semantic` |
+| `CHUNK_STRATEGY_DEFAULT` | Fallback strategy | `recursive` |
+
+### Function App
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TRIGGER_MODE` | `BLOB`, `EVENTGRID_QUEUE`, or `EVENTGRID_DIRECT` | `BLOB` |
+| `QUEUE_NAME` | Queue name (for queue trigger mode) | `doc-processing-queue` |
+| `LOG_LEVEL` | Python logging level | `INFO` |
+| `FUNCTION_APP_NAME` | App name (for health check response) | `ai-foundry-processing` |
 
 ---
 
-## Documentation
+## Deployment
 
-| Document | What's In It |
-|----------|-------------|
-| **[ai-foundry-processing/README.md](ai-foundry-processing/README.md)** | Full architecture deep-dive, Content Understanding details, RBAC setup, AI Search schema, deployment reference |
-| **[custom-processing/README.md](custom-processing/README.md)** | Custom path quick-start, Presidio/spaCy setup, cost breakdown |
+```bash
+# 1. Configure
+cp .env.example .env
+# Fill in Azure resource values
+
+# 2. Deploy (creates infra + publishes code)
+./deploy.sh
+```
+
+The deploy script:
+1. Creates the Azure Function App (if needed)
+2. Assigns Managed Identity with RBAC roles for ADLS, AI Search, Key Vault
+3. Ensures OpenAI model deployments exist
+4. Configures all app settings from `.env`
+5. Publishes the function code
+
+---
+
+## Local Development
+
+```bash
+cp .env.example .env
+# Fill in .env with your Azure resource values
+
+pip install -r requirements.txt
+func start
+```
+
+Test the health check:
+```bash
+curl http://localhost:7071/api/health
+```
+
+Upload a document to the configured ADLS container to trigger processing.
